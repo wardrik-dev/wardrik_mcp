@@ -1,0 +1,113 @@
+# WardrikMCP
+
+The tools of any MCP server, for [WardrikCore](https://hexdocs.pm/wardrik_core) agents to call.
+
+## Install
+
+```elixir
+def deps do
+  [
+    {:wardrik_mcp, "~> 0.1"}
+  ]
+end
+```
+
+## Connect to servers
+
+Add `WardrikMCP` to your supervision tree, with the servers it reaches. A server runs as a command,
+or is reached over HTTP:
+
+```elixir
+children = [
+  {WardrikMCP,
+   servers: [
+     github: [
+       transport:
+         {:stdio,
+          command: "github-mcp-server",
+          args: ["stdio"],
+          env: %{"GITHUB_PERSONAL_ACCESS_TOKEN" => System.fetch_env!("GITHUB_TOKEN")}},
+       only: ["search_issues", "create_issue"]
+     ],
+     linear: [
+       transport:
+         {:streamable_http,
+          base_url: "https://mcp.linear.app/mcp",
+          headers: %{"authorization" => "Bearer " <> System.fetch_env!("LINEAR_TOKEN")}}
+     ]
+   ]}
+]
+```
+
+Each server connects on its own. One that's down offers no tools, and holds up nothing else. It's
+tried again, waiting longer each time, up to a minute.
+
+## Give an agent the tools
+
+A server's tools are a `WardrikCore.Capability`, named by the server:
+
+```elixir
+WardrikCore.start_agent(
+  agent_id: "triage",
+  model: "anthropic:claude-haiku-4-5",
+  capabilities: [{WardrikMCP, [:github, :linear]}]
+)
+```
+
+The model sees each tool as `github__search_issues`, with the server's own description and JSON
+Schema. When the server says its tools changed, the agent gets the new ones from its next turn.
+
+| Key | Takes | Unless set |
+| --- | --- | --- |
+| `transport` | `{:stdio, command: …, args: …, env: …}` or `{:streamable_http, base_url: …, headers: …}` | required |
+| `only` | the server's own tool names to offer | every tool |
+| `except` | the server's own tool names to leave out | none |
+| `timeout` | how long a call may take, in milliseconds | 60 seconds |
+| `max_result_bytes` | how much of a result the model gets | 128 KB |
+| `cost` | what each call costs, as `[usd: 0.001]`, or a function of the server's result | nothing |
+
+The model gets a result's structured content where the server sends some, and its text otherwise.
+A longer result is cut, and the model is told. A tool's error reaches the model as the call's error.
+
+## What a server says about its tools
+
+An MCP server marks its tools with hints. Each tool carries them as
+[annotations](https://hexdocs.pm/wardrik_core/WardrikCore.Tool.html):
+
+| The server's hint | The tool's annotation |
+| --- | --- |
+| `readOnlyHint` | `read_only`, and `idempotent` too |
+| `destructiveHint` | `destructive` |
+| `idempotentHint` | `idempotent` |
+| `openWorldHint` | `open_world` |
+
+A hint the server doesn't give isn't set. Anything that reads annotations can decide by them. With
+[WardrikPolicy](https://hexdocs.pm/wardrik_policy), a tool the server doesn't mark read-only can
+wait for a person:
+
+```elixir
+WardrikPolicy.new!(default: [destructive: :deny, read_only: :allow, else: :ask])
+```
+
+## What a call cost
+
+A server that charges for its calls can say so. Give it a fixed `cost`, or read it from the
+server's result:
+
+```elixir
+search: [
+  transport: {:streamable_http, base_url: "https://search.example.com/mcp"},
+  cost: fn result -> %{usd: result["_meta"]["usd"]} end
+]
+```
+
+Each call's cost is measured on its step, so a budget counts it.
+
+## Events
+
+Each time the tools a server offers change, `WardrikMCP` emits `[:wardrik_mcp, :tools]`. It carries
+the `server`, and measures the `count` of tools the server now offers, which is 0 while it's down.
+
+## License
+
+Apache-2.0
