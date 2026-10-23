@@ -19,6 +19,7 @@ defmodule WardrikMCP.Server do
     :only,
     :except,
     :cost,
+    :mcp,
     timeout: :timer.seconds(60),
     max_result_bytes: 128 * 1024
   ]
@@ -31,6 +32,7 @@ defmodule WardrikMCP.Server do
           only: [String.t()] | nil,
           except: [String.t()] | nil,
           cost: cost() | nil,
+          mcp: atom() | nil,
           timeout: pos_integer(),
           max_result_bytes: pos_integer()
         }

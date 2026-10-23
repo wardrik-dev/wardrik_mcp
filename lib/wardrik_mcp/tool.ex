@@ -54,7 +54,7 @@ defmodule WardrikMCP.Tool do
   end
 
   defp called(server, name, arguments) do
-    server.name
+    server
     |> Connection.client()
     |> Anubis.Client.call_tool(name, arguments, timeout: server.timeout)
   catch

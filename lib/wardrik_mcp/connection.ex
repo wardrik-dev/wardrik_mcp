@@ -8,7 +8,6 @@ defmodule WardrikMCP.Connection do
   alias WardrikMCP.Server
   alias WardrikMCP.Tool
 
-  @registry WardrikMCP.Registry
   @first_retry :timer.seconds(1)
   @last_retry :timer.minutes(1)
   @ready :timer.seconds(30)
@@ -18,19 +17,23 @@ defmodule WardrikMCP.Connection do
     do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [server]}}
 
   @spec start_link(Server.t()) :: GenServer.on_start()
-  def start_link(%Server{name: name} = server),
-    do: GenServer.start_link(__MODULE__, server, name: {:via, Registry, {@registry, name, []}})
+  def start_link(%Server{name: name, mcp: mcp} = server),
+    do:
+      GenServer.start_link(__MODULE__, server, name: {:via, Registry, {registry(mcp), name, []}})
 
-  @spec tools(atom()) :: [WardrikCore.Tool.t()]
-  def tools(name) do
-    case Registry.lookup(@registry, name) do
+  @spec registry(atom()) :: atom()
+  def registry(mcp), do: Module.concat(mcp, Registry)
+
+  @spec tools(atom(), atom()) :: [WardrikCore.Tool.t()]
+  def tools(mcp, name) do
+    case Registry.lookup(registry(mcp), name) do
       [{_pid, tools}] -> tools
       [] -> []
     end
   end
 
-  @spec client(atom()) :: GenServer.name()
-  def client(name), do: via({name, :client})
+  @spec client(Server.t()) :: GenServer.name()
+  def client(server), do: via(server, :client)
 
   @spec handle_event([atom()], map(), map(), pid()) :: :ok
   def handle_event(_event, _measurements, %{method: "tools/list_changed"}, connection) do
@@ -78,19 +81,22 @@ defmodule WardrikMCP.Connection do
     end
   end
 
-  defp start_client(%Server{name: name, transport: transport}) do
+  defp start_client(%Server{name: name, transport: transport} = server) do
     Anubis.Client.start_link(
-      name: client(name),
-      transport_name: via({name, :transport}),
+      name: client(server),
+      transport_name: via(server, :transport),
       transport: transport,
-      client_info: %{"name" => "wardrik_mcp_#{name}", "version" => version()},
+      client_info: %{
+        "name" => "wardrik_mcp #{inspect(server.mcp)} #{name}",
+        "version" => version()
+      },
       capabilities: %{}
     )
   end
 
-  defp listed(%Server{name: name}) do
-    with :ok <- Anubis.Client.await_ready(client(name), timeout: @ready) do
-      page(client(name), [], [])
+  defp listed(server) do
+    with :ok <- Anubis.Client.await_ready(client(server), timeout: @ready) do
+      page(client(server), [], [])
     end
   catch
     :exit, reason -> {:error, reason}
@@ -113,8 +119,13 @@ defmodule WardrikMCP.Connection do
       |> Enum.filter(fn definition -> Server.offers?(server, definition["name"]) end)
       |> Enum.map(&Tool.new(server, &1))
 
-    Registry.update_value(@registry, server.name, fn _offered -> tools end)
-    :telemetry.execute([:wardrik_mcp, :tools], %{count: length(tools)}, %{server: server.name})
+    Registry.update_value(registry(server.mcp), server.name, fn _offered -> tools end)
+
+    :telemetry.execute([:wardrik_mcp, :tools], %{count: length(tools)}, %{
+      mcp: server.mcp,
+      server: server.name
+    })
+
     state
   end
 
@@ -146,9 +157,9 @@ defmodule WardrikMCP.Connection do
     )
   end
 
-  defp handler(server), do: {__MODULE__, server.name}
+  defp handler(server), do: {__MODULE__, server.mcp, server.name}
 
-  defp via(key), do: {:via, Registry, {@registry, key}}
+  defp via(server, role), do: {:via, Registry, {registry(server.mcp), {server.name, role}}}
 
   defp version, do: :wardrik_mcp |> Application.spec(:vsn) |> to_string()
 end

@@ -5,6 +5,7 @@ defmodule WardrikMCPTest do
   alias WardrikCore.Tool
   alias WardrikCore.ToolCall
 
+  @mcp WardrikMCPTest.MCP
   @stub {:stdio, command: "elixir", args: [Path.expand("support/stub_server.exs", __DIR__)]}
 
   setup_all do
@@ -12,6 +13,7 @@ defmodule WardrikMCPTest do
 
     start_supervised!(
       {WardrikMCP,
+       name: @mcp,
        servers: [
          stub: [transport: @stub],
          cheap: [transport: @stub, only: ["echo", "charge"], cost: [usd: 0.01]],
@@ -41,7 +43,7 @@ defmodule WardrikMCPTest do
   end
 
   test "gives several servers' tools together" do
-    assert length(WardrikMCP.tools(context(), [:stub, :cheap])) ==
+    assert length(WardrikMCP.tools(context(), name: @mcp, servers: [:stub, :cheap])) ==
              length(tools(:stub)) + length(tools(:cheap))
   end
 
@@ -100,7 +102,7 @@ defmodule WardrikMCPTest do
     refute tool(:growing, "grown")
     assert {:ok, "grown", _context} = call(:growing, "grow")
 
-    assert_receive {:tools, :growing, %{count: 8}}, 5_000
+    assert_receive {:tools, @mcp, :growing, %{count: 8}}, 5_000
     assert tool(:growing, "grown")
   end
 
@@ -109,14 +111,34 @@ defmodule WardrikMCPTest do
     {:ok, client} = flaky_client()
     Process.exit(client, :kill)
 
-    assert_receive {:tools, :flaky, %{count: 0}}, 5_000
-    assert_receive {:tools, :flaky, %{count: count}}, 5_000
+    assert_receive {:tools, @mcp, :flaky, %{count: 0}}, 5_000
+    assert_receive {:tools, @mcp, :flaky, %{count: count}}, 5_000
     assert count > 0
     assert {:ok, "back", _context} = call(:flaky, "echo", %{"value" => "back"})
   end
 
+  test "keeps the servers of each WardrikMCP apart" do
+    listen()
+
+    start_supervised!(
+      {WardrikMCP,
+       name: WardrikMCPTest.Other, servers: [stub: [transport: @stub, only: ["echo"]]]},
+      id: :other
+    )
+
+    assert_receive {:tools, WardrikMCPTest.Other, :stub, %{count: 1}}, 10_000
+
+    assert ["stub__echo"] =
+             Enum.map(
+               WardrikMCP.tools(context(), name: WardrikMCPTest.Other, servers: :stub),
+               & &1.name
+             )
+
+    assert "stub__charge" in Enum.map(tools(:stub), & &1.name)
+  end
+
   defp flaky_client do
-    [{connection, _tools}] = Registry.lookup(WardrikMCP.Registry, :flaky)
+    [{connection, _tools}] = Registry.lookup(WardrikMCP.Connection.registry(@mcp), :flaky)
     {:ok, :sys.get_state(connection).client}
   end
 
@@ -127,8 +149,8 @@ defmodule WardrikMCPTest do
     :telemetry.attach(
       id,
       [:wardrik_mcp, :tools],
-      fn _event, measured, %{server: server}, _config ->
-        send(test, {:tools, server, measured})
+      fn _event, measured, %{mcp: mcp, server: server}, _config ->
+        send(test, {:tools, mcp, server, measured})
       end,
       nil
     )
@@ -136,7 +158,7 @@ defmodule WardrikMCPTest do
     on_exit(fn -> :telemetry.detach(id) end)
   end
 
-  defp tools(server), do: WardrikMCP.tools(context(), server)
+  defp tools(server), do: WardrikMCP.tools(context(), name: @mcp, servers: server)
 
   defp tool(server, name), do: Enum.find(tools(server), &(&1.name == "#{server}__#{name}"))
 
@@ -148,6 +170,6 @@ defmodule WardrikMCPTest do
   defp context, do: Context.new(agent_id: "mcp-test")
 
   defp connected(server) do
-    if tools(server) == [], do: assert_receive({:tools, ^server, %{count: _count}}, 10_000)
+    if tools(server) == [], do: assert_receive({:tools, @mcp, ^server, %{count: _count}}, 10_000)
   end
 end

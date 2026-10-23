@@ -14,12 +14,13 @@ end
 
 ## Connect to servers
 
-Add `WardrikMCP` to your supervision tree, with the servers it reaches. A server runs as a command,
+Add `WardrikMCP` to your supervision tree, with a name and the servers it reaches. A server runs as a command,
 or is reached over HTTP:
 
 ```elixir
 children = [
   {WardrikMCP,
+   name: MyApp.MCP,
    servers: [
      github: [
        transport:
@@ -50,7 +51,7 @@ A server's tools are a `WardrikCore.Capability`, named by the server:
 WardrikCore.start_agent(
   agent_id: "triage",
   model: "anthropic:claude-haiku-4-5",
-  capabilities: [{WardrikMCP, [:github, :linear]}]
+  capabilities: [{WardrikMCP, name: MyApp.MCP, servers: [:github, :linear]}]
 )
 ```
 
@@ -106,7 +107,7 @@ Each call's cost is measured on its step, so a budget counts it.
 ## Events
 
 Each time the tools a server offers change, `WardrikMCP` emits `[:wardrik_mcp, :tools]`. It carries
-the `server`, and measures the `count` of tools the server now offers, which is 0 while it's down.
+the `mcp` it runs under and the `server`, and measures the `count` of tools the server now offers, which is 0 while it's down.
 
 ## License
 

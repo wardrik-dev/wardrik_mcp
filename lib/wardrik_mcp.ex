@@ -4,6 +4,7 @@ defmodule WardrikMCP do
 
       children = [
         {WardrikMCP,
+         name: MyApp.MCP,
          servers: [
            github: [
              transport: {:stdio, command: "github-mcp-server", args: ["stdio"]},
@@ -23,7 +24,7 @@ defmodule WardrikMCP do
       WardrikCore.start_agent(
         agent_id: "triage",
         model: "anthropic:claude-haiku-4-5",
-        capabilities: [{WardrikMCP, [:github, :linear]}]
+        capabilities: [{WardrikMCP, name: MyApp.MCP, servers: [:github, :linear]}]
       )
 
   The model sees each tool as `github__search_issues`, with the server's own description and JSON
@@ -38,7 +39,8 @@ defmodule WardrikMCP do
   asked for them again.
 
   Each time the tools a server offers change, it emits `[:wardrik_mcp, :tools]`. The event carries
-  the `server`, and measures the `count` of tools it now offers, which is 0 while it's down.
+  the `mcp` it runs under and the `server`, and measures the `count` of tools it now offers, which
+  is 0 while it's down.
 
   Reach for this when the tools an agent needs already exist as an MCP server.
   """
@@ -48,24 +50,40 @@ defmodule WardrikMCP do
   alias WardrikMCP.Connection
   alias WardrikMCP.Server
 
-  @doc "Starts a connection to each of the `:servers`, a keyword list of name and options."
+  @doc """
+  Starts a connection to each of the `:servers`, a keyword list of name and options, under the
+  `:name` agents reach them by.
+  """
   @spec start_link(keyword()) :: Supervisor.on_start()
-  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(opts) do
+    opts = Keyword.validate!(opts, [:name, :servers])
+    name = Keyword.fetch!(opts, :name)
+    Supervisor.start_link(__MODULE__, {name, Keyword.fetch!(opts, :servers)}, name: name)
+  end
 
   @impl Supervisor
-  def init(opts) do
+  def init({name, servers}) do
     connections =
-      opts
-      |> Keyword.validate!([:servers])
-      |> Keyword.fetch!(:servers)
-      |> Enum.map(fn {name, server} -> {Connection, Server.new!(name, server)} end)
+      Enum.map(servers, fn {server, opts} ->
+        {Connection, %{Server.new!(server, opts) | mcp: name}}
+      end)
 
-    Supervisor.init([{Registry, keys: :unique, name: WardrikMCP.Registry} | connections],
+    Supervisor.init([{Registry, keys: :unique, name: Connection.registry(name)} | connections],
       strategy: :rest_for_one
     )
   end
 
-  @doc "Gives the tools of the servers named, as `:github` or `[:github, :linear]`."
+  @doc """
+  Gives the tools of the `:servers` named, as `:github` or `[:github, :linear]`, that the
+  `WardrikMCP` started as `:name` connects to.
+  """
   @impl WardrikCore.Capability
-  def tools(_context, servers), do: servers |> List.wrap() |> Enum.flat_map(&Connection.tools/1)
+  def tools(_context, opts) do
+    mcp = Keyword.fetch!(opts, :name)
+
+    opts
+    |> Keyword.fetch!(:servers)
+    |> List.wrap()
+    |> Enum.flat_map(&Connection.tools(mcp, &1))
+  end
 end
