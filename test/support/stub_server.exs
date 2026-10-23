@@ -43,6 +43,12 @@ defmodule StubServer do
     }
   ]
 
+  @whoami %{
+    "name" => "whoami",
+    "description" => "Says the token it was started with.",
+    "inputSchema" => %{"type" => "object", "properties" => %{}}
+  }
+
   @grown %{
     "name" => "grown",
     "description" => "The tool grow added.",
@@ -71,7 +77,7 @@ defmodule StubServer do
   end
 
   defp respond(%{"method" => "tools/list", "id" => id}, grown) do
-    reply(id, %{"tools" => if(grown, do: @tools ++ [@grown], else: @tools)})
+    reply(id, %{"tools" => if(grown, do: @tools ++ [@whoami, @grown], else: @tools ++ [@whoami])})
     grown
   end
 
@@ -96,6 +102,10 @@ defmodule StubServer do
   defp respond(_notification, grown), do: grown
 
   defp called("echo", arguments, id, grown), do: text(id, arguments["value"], grown)
+
+  defp called("whoami", _arguments, id, grown),
+    do: text(id, System.get_env("STUB_TOKEN", "nobody"), grown)
+
   defp called("big", _arguments, id, grown), do: text(id, String.duplicate("é", 1000), grown)
   defp called("slow", _arguments, _id, grown), do: grown
 

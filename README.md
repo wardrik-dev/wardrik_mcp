@@ -65,10 +65,53 @@ Schema. When the server says its tools changed, the agent gets the new ones from
 | `except` | the server's own tool names to leave out | none |
 | `timeout` | how long a call may take, in milliseconds | 60 seconds |
 | `max_result_bytes` | how much of a result the model gets | 128 KB |
+| `prefix` | what its tools are named under | its name |
+| `credential` | the credential each principal reaches it with | none |
 | `cost` | what each call costs, as `[usd: 0.001]`, or a function of the server's result | nothing |
 
 The model gets a result's structured content where the server sends some, and its text otherwise.
 A longer result is cut, and the model is told. A tool's error reaches the model as the call's error.
+
+## Add servers as the app runs
+
+Add and remove servers while the app runs. Give `WardrikMCP` a `store:`, and every node reaches
+what any adds:
+
+```elixir
+{WardrikMCP, name: MyApp.MCP, store: store, servers: []}
+
+:ok =
+  WardrikMCP.add(MyApp.MCP, "linear",
+    transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
+    prefix: "linear"
+  )
+
+:ok = WardrikMCP.remove(MyApp.MCP, "linear")
+```
+
+A server added as the app runs takes its options as data. Each node reads the servers in the store
+again every minute, or when you call `reconcile/1`.
+
+## Reach a server as each person
+
+Name a `credential`, and each principal reaches the server with their own, from the agent's
+`WardrikCore.Credentials`, over a connection of their own:
+
+```elixir
+WardrikMCP.add(MyApp.MCP, "linear",
+  transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
+  credential: "linear"
+)
+```
+
+Over HTTP, it's sent as `authorization: Bearer <token>`; `credential_header` and
+`credential_scheme` change that. A command gets it in the variable `credential_env` names. A
+principal who holds none yet is asked to sign in, and the call waits on it. A credential that
+changes reconnects.
+
+Until anyone has reached it, the server offers one tool, `linear__connect`, so an agent can begin.
+Once someone has, its tools are kept in the store and offered to everyone. A person's connection
+closes after five minutes without a call.
 
 ## What a server says about its tools
 

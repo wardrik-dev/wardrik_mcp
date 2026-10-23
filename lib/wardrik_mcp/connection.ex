@@ -6,34 +6,70 @@ defmodule WardrikMCP.Connection do
 
   alias Anubis.MCP.Response
   alias WardrikMCP.Server
+  alias WardrikMCP.Servers
   alias WardrikMCP.Tool
 
   @first_retry :timer.seconds(1)
   @last_retry :timer.minutes(1)
   @ready :timer.seconds(30)
+  @idle :timer.minutes(5)
 
-  @spec child_spec(Server.t()) :: Supervisor.child_spec()
-  def child_spec(%Server{name: name} = server),
-    do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [server]}}
+  @spec child_spec({Server.t(), String.t() | nil, String.t() | nil}) :: Supervisor.child_spec()
+  def child_spec({server, who, _token} = args),
+    do: %{
+      id: {__MODULE__, server.name, who},
+      start: {__MODULE__, :start_link, [args]},
+      restart: if(who, do: :temporary, else: :permanent)
+    }
 
-  @spec start_link(Server.t()) :: GenServer.on_start()
-  def start_link(%Server{name: name, mcp: mcp} = server),
-    do:
-      GenServer.start_link(__MODULE__, server, name: {:via, Registry, {registry(mcp), name, []}})
+  @spec start_link({Server.t(), String.t() | nil, String.t() | nil}) :: GenServer.on_start()
+  def start_link({server, who, token}) do
+    name = {:via, Registry, {registry(server.mcp), {:connection, server.name, who}, hash(token)}}
+    GenServer.start_link(__MODULE__, {server, who, token}, name: name)
+  end
 
   @spec registry(atom()) :: atom()
   def registry(mcp), do: Module.concat(mcp, Registry)
 
-  @spec tools(atom(), atom()) :: [WardrikCore.Tool.t()]
+  @spec supervisor(atom()) :: atom()
+  def supervisor(mcp), do: Module.concat(mcp, Connections)
+
+  @spec tools(atom(), String.t()) :: [WardrikCore.Tool.t()]
   def tools(mcp, name) do
-    case Registry.lookup(registry(mcp), name) do
+    case Registry.lookup(registry(mcp), {:tools, name}) do
       [{_pid, tools}] -> tools
       [] -> []
     end
   end
 
-  @spec client(Server.t()) :: GenServer.name()
-  def client(server), do: via(server, :client)
+  @spec client(Server.t(), String.t() | nil) :: GenServer.name()
+  def client(server, who),
+    do: {:via, Registry, {registry(server.mcp), {:client, server.name, who}}}
+
+  @doc """
+  Returns the client the principal the turn acts for reaches `server` with, connecting with their
+  credential, and again when it changed.
+  """
+  @spec open(Server.t(), WardrikCore.Context.t()) ::
+          {:ok, GenServer.name()} | {:park, WardrikCore.Authorization.t()} | {:error, term()}
+  def open(server, context) do
+    case WardrikCore.Credentials.fetch(context, server.credential) do
+      {:ok, token} -> opened(server, who(context), token)
+      {:park, authorization} -> {:park, authorization}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc "Stops every connection to the server `name`."
+  @spec close(atom(), String.t()) :: :ok
+  def close(mcp, name) do
+    for pid <-
+          Registry.select(registry(mcp), [{{{:connection, name, :_}, :"$1", :_}, [], [:"$1"]}]) do
+      DynamicSupervisor.terminate_child(supervisor(mcp), pid)
+    end
+
+    :ok
+  end
 
   @spec handle_event([atom()], map(), map(), pid()) :: :ok
   def handle_event(_event, _measurements, %{method: "tools/list_changed"}, connection) do
@@ -44,14 +80,36 @@ defmodule WardrikMCP.Connection do
   def handle_event(_event, _measurements, _metadata, _connection), do: :ok
 
   @impl GenServer
-  def init(%Server{} = server) do
+  def init({server, who, token}) do
     Process.flag(:trap_exit, true)
-    listen_for_changes(server)
-    {:ok, %{server: server, client: nil, retry: @first_retry}, {:continue, :connect}}
+
+    {:ok,
+     %{
+       server: server,
+       who: who,
+       token: token,
+       client: nil,
+       slot: nil,
+       retry: @first_retry,
+       failure: nil,
+       used: 0
+     }, {:continue, :connect}}
   end
 
   @impl GenServer
-  def handle_continue(:connect, state), do: {:noreply, connect(state)}
+  def handle_continue(:connect, state) do
+    listen_for_changes(state)
+    {:noreply, state |> claimed() |> connect()}
+  end
+
+  @impl GenServer
+  def handle_call(:ready, _from, %{failure: nil} = state), do: {:reply, :ok, used(state)}
+
+  def handle_call(:ready, _from, %{failure: reason} = state),
+    do: {:stop, :normal, {:error, reason}, state}
+
+  @impl GenServer
+  def handle_cast(:used, state), do: {:noreply, used(state)}
 
   @impl GenServer
   def handle_info(:connect, state), do: {:noreply, connect(state)}
@@ -59,44 +117,104 @@ defmodule WardrikMCP.Connection do
   def handle_info(:list_changed, %{client: nil} = state), do: {:noreply, state}
   def handle_info(:list_changed, state), do: {:noreply, refresh(state)}
 
+  def handle_info({:idle, used}, %{used: used} = state), do: {:stop, :normal, state}
+  def handle_info({:idle, _used}, state), do: {:noreply, state}
+
+  def handle_info({:EXIT, client, _reason}, %{client: client, who: who} = state)
+      when is_binary(who),
+      do: {:stop, :normal, state}
+
   def handle_info({:EXIT, client, reason}, %{client: client} = state),
     do: {:noreply, %{state | client: nil} |> offer([]) |> retry_later(reason)}
 
   def handle_info({:EXIT, _gone, _reason}, state), do: {:noreply, state}
 
   @impl GenServer
-  def terminate(_reason, %{server: server}), do: :telemetry.detach(handler(server))
+  def terminate(_reason, state), do: :telemetry.detach(handler(state))
 
-  defp connect(%{server: server} = state) do
-    case start_client(server) do
+  defp opened(server, who, token) do
+    registry = registry(server.mcp)
+
+    case Registry.lookup(registry, {:connection, server.name, who}) do
+      [{pid, hashed}] -> reopened(server, who, token, pid, hashed == hash(token))
+      [] -> started(server, who, token)
+    end
+  end
+
+  defp reopened(server, who, _token, pid, true) do
+    GenServer.cast(pid, :used)
+    {:ok, client(server, who)}
+  end
+
+  defp reopened(server, who, token, pid, false) do
+    DynamicSupervisor.terminate_child(supervisor(server.mcp), pid)
+    started(server, who, token)
+  end
+
+  defp started(server, who, token) do
+    case DynamicSupervisor.start_child(supervisor(server.mcp), {__MODULE__, {server, who, token}}) do
+      {:ok, pid} -> ready(server, who, pid)
+      {:error, {:already_started, pid}} -> ready(server, who, pid)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp ready(server, who, pid) do
+    case GenServer.call(pid, :ready, @ready + :timer.seconds(5)) do
+      :ok -> {:ok, client(server, who)}
+      {:error, reason} -> {:error, reason}
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp claimed(%{server: server} = state) do
+    if state.who == nil,
+      do: {:ok, _owner} = Registry.register(registry(server.mcp), {:tools, server.name}, [])
+
+    %{state | slot: slot(registry(server.mcp), 0)}
+  end
+
+  defp slot(registry, n) do
+    case Registry.register(registry, {:slot, n}, nil) do
+      {:ok, _owner} -> n
+      {:error, {:already_registered, _pid}} -> slot(registry, n + 1)
+    end
+  end
+
+  defp connect(state) do
+    case start_client(state) do
       {:ok, client} -> refresh(%{state | client: client})
-      {:error, reason} -> retry_later(state, reason)
+      {:error, reason} -> failed(state, reason)
     end
   end
 
-  defp refresh(%{server: server} = state) do
-    case listed(server) do
-      {:ok, definitions} -> %{offer(state, definitions) | retry: @first_retry}
-      {:error, reason} -> state |> disconnect() |> retry_later(reason)
+  defp refresh(state) do
+    case listed(state) do
+      {:ok, definitions} -> %{offer(state, definitions) | retry: @first_retry, failure: nil}
+      {:error, reason} -> state |> disconnect() |> failed(reason)
     end
   end
 
-  defp start_client(%Server{name: name, transport: transport} = server) do
+  defp failed(%{who: nil} = state, reason), do: retry_later(state, reason)
+  defp failed(state, reason), do: %{state | failure: reason}
+
+  defp start_client(%{server: server, who: who, token: token, slot: slot}) do
     Anubis.Client.start_link(
-      name: client(server),
-      transport_name: via(server, :transport),
-      transport: transport,
+      name: client(server, who),
+      transport_name: {:via, Registry, {registry(server.mcp), {:transport, server.name, who}}},
+      transport: Server.transport(server, token),
       client_info: %{
-        "name" => "wardrik_mcp #{inspect(server.mcp)} #{name}",
+        "name" => "wardrik_mcp #{inspect(server.mcp)} #{slot}",
         "version" => version()
       },
       capabilities: %{}
     )
   end
 
-  defp listed(server) do
-    with :ok <- Anubis.Client.await_ready(client(server), timeout: @ready) do
-      page(client(server), [], [])
+  defp listed(%{server: server, who: who}) do
+    with :ok <- Anubis.Client.await_ready(client(server, who), timeout: @ready) do
+      page(client(server, who), [], [])
     end
   catch
     :exit, reason -> {:error, reason}
@@ -113,20 +231,32 @@ defmodule WardrikMCP.Connection do
 
   defp next_page(_client, _result, listed), do: {:ok, listed}
 
-  defp offer(%{server: server} = state, definitions) do
-    tools =
-      definitions
-      |> Enum.filter(fn definition -> Server.offers?(server, definition["name"]) end)
-      |> Enum.map(&Tool.new(server, &1))
-
-    Registry.update_value(registry(server.mcp), server.name, fn _offered -> tools end)
-
-    :telemetry.execute([:wardrik_mcp, :tools], %{count: length(tools)}, %{
-      mcp: server.mcp,
-      server: server.name
-    })
-
+  defp offer(%{server: server, who: nil} = state, definitions) do
+    tools = Tool.offered(server, definitions)
+    Registry.update_value(registry(server.mcp), {:tools, server.name}, fn _offered -> tools end)
+    told(server, length(tools))
     state
+  end
+
+  defp offer(%{server: server} = state, definitions) do
+    Servers.listed(server.mcp, server.name, definitions)
+    told(server, length(Tool.offered(server, definitions)))
+    state
+  end
+
+  defp told(server, count),
+    do:
+      :telemetry.execute([:wardrik_mcp, :tools], %{count: count}, %{
+        mcp: server.mcp,
+        server: server.name
+      })
+
+  defp used(%{who: nil} = state), do: state
+
+  defp used(state) do
+    used = state.used + 1
+    Process.send_after(self(), {:idle, used}, @idle)
+    %{state | used: used}
   end
 
   defp disconnect(%{client: nil} = state), do: state
@@ -148,18 +278,26 @@ defmodule WardrikMCP.Connection do
     %{state | retry: min(retry * 2, @last_retry)}
   end
 
-  defp listen_for_changes(server) do
+  defp listen_for_changes(state) do
     :telemetry.attach(
-      handler(server),
+      handler(state),
       [:anubis_mcp, :client, :notification],
       &__MODULE__.handle_event/4,
       self()
     )
   end
 
-  defp handler(server), do: {__MODULE__, server.mcp, server.name}
+  defp handler(%{server: server, who: who}), do: {__MODULE__, server.mcp, server.name, who}
 
-  defp via(server, role), do: {:via, Registry, {registry(server.mcp), {server.name, role}}}
+  defp who(context) do
+    case WardrikCore.Context.acting_for(context) do
+      %WardrikCore.Principal{id: id} -> id
+      nil -> ""
+    end
+  end
+
+  defp hash(nil), do: nil
+  defp hash(token), do: :erlang.phash2(token)
 
   defp version, do: :wardrik_mcp |> Application.spec(:vsn) |> to_string()
 end

@@ -15,14 +15,34 @@ defmodule WardrikMCP.Tool do
 
   @margin :timer.seconds(1)
 
+  @spec offered(Server.t(), [map()]) :: [WardrikCore.Tool.t()]
+  def offered(server, definitions) do
+    definitions
+    |> Enum.filter(fn definition -> Server.offers?(server, definition["name"]) end)
+    |> Enum.map(&new(server, &1))
+  end
+
   @spec new(Server.t(), map()) :: WardrikCore.Tool.t()
   def new(%Server{} = server, %{"name" => name} = definition) do
     WardrikCore.Tool.new!(
-      name: "#{server.name}__#{name}",
+      name: "#{Server.prefix(server)}__#{name}",
       description: Map.get(definition, "description", name),
       schema: Map.get(definition, "inputSchema", %{"type" => "object"}),
       run: fn arguments, context -> call(server, name, arguments, context) end,
       annotations: [timeout: server.timeout + @margin] ++ hints(definition)
+    )
+  end
+
+  @doc "The one tool a server offers before anyone has reached it with their credential: connecting."
+  @spec connect(Server.t()) :: WardrikCore.Tool.t()
+  def connect(%Server{} = server) do
+    WardrikCore.Tool.new!(
+      name: "#{Server.prefix(server)}__connect",
+      description:
+        "Connects to #{server.name} as whoever you act for, signing in first if they must. Its tools come with the next turn.",
+      schema: %{"type" => "object", "properties" => %{}},
+      run: fn _arguments, context -> connected(server, context) end,
+      annotations: [read_only: true, idempotent: true]
     )
   end
 
@@ -48,15 +68,38 @@ defmodule WardrikMCP.Tool do
   end
 
   defp call(server, name, arguments, context) do
-    called = called(server, name, arguments)
+    case client(server, context) do
+      {:ok, client} ->
+        answered(server, called(server, client, name, arguments), context)
+
+      {:park, authorization} ->
+        {:park, authorization}
+
+      {:error, reason} ->
+        {:error, "The MCP server #{server.name} isn't connected: #{inspect(reason)}"}
+    end
+  end
+
+  defp connected(server, context) do
+    case Connection.open(server, context) do
+      {:ok, _client} -> {:ok, "Connected to #{server.name}. Its tools come with the next turn."}
+      {:park, authorization} -> {:park, authorization}
+      {:error, reason} -> {:error, "#{server.name} didn't connect: #{inspect(reason)}"}
+    end
+  end
+
+  defp client(%Server{credential: nil} = server, _context),
+    do: {:ok, Connection.client(server, nil)}
+
+  defp client(server, context), do: Connection.open(server, context)
+
+  defp answered(server, called, context) do
     {tag, output} = Result.answer(called, server.max_result_bytes)
     {tag, output, Context.measure(context, cost(server.cost, called))}
   end
 
-  defp called(server, name, arguments) do
-    server
-    |> Connection.client()
-    |> Anubis.Client.call_tool(name, arguments, timeout: server.timeout)
+  defp called(server, client, name, arguments) do
+    Anubis.Client.call_tool(client, name, arguments, timeout: server.timeout)
   catch
     :exit, _reason -> {:error, "The MCP server #{server.name} isn't connected."}
   end

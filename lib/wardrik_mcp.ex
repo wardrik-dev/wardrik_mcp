@@ -48,34 +48,69 @@ defmodule WardrikMCP do
   use Supervisor
 
   alias WardrikMCP.Connection
-  alias WardrikMCP.Server
+  alias WardrikMCP.Servers
 
   @doc """
   Starts a connection to each of the `:servers`, a keyword list of name and options, under the
-  `:name` agents reach them by.
+  `:name` agents reach them by. Takes `:store`, a `WardrikStore` to keep servers added as the app
+  runs in, and `:reconcile`, how often each node reads them again, a minute unless set.
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
-    opts = Keyword.validate!(opts, [:name, :servers])
+    opts = Keyword.validate!(opts, [:name, servers: [], store: nil, reconcile: :timer.minutes(1)])
     name = Keyword.fetch!(opts, :name)
-    Supervisor.start_link(__MODULE__, {name, Keyword.fetch!(opts, :servers)}, name: name)
-  end
-
-  @impl Supervisor
-  def init({name, servers}) do
-    connections =
-      Enum.map(servers, fn {server, opts} ->
-        {Connection, %{Server.new!(server, opts) | mcp: name}}
-      end)
-
-    Supervisor.init([{Registry, keys: :unique, name: Connection.registry(name)} | connections],
-      strategy: :rest_for_one
-    )
+    Supervisor.start_link(__MODULE__, Map.new(opts), name: name)
   end
 
   @doc """
-  Gives the tools of the `:servers` named, as `:github` or `[:github, :linear]`, that the
-  `WardrikMCP` started as `:name` connects to.
+  Adds the server `name` as the app runs, taking what a server in `:servers` takes, as data. With
+  a store, every node reaches it.
+
+      :ok =
+        WardrikMCP.add(MyApp.MCP, "linear",
+          transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
+          credential: "linear"
+        )
+  """
+  @spec add(atom(), String.t(), keyword()) :: :ok | {:error, String.t()}
+  def add(mcp, name, opts) when is_binary(name), do: Servers.add(mcp, name, opts)
+
+  @doc "Removes the server `name`, added as the app ran, and closes every connection to it."
+  @spec remove(atom(), String.t()) :: :ok | {:error, :not_found | String.t()}
+  def remove(mcp, name), do: Servers.remove(mcp, name)
+
+  @doc "Returns the names of the servers it reaches."
+  @spec servers(atom()) :: [String.t()]
+  def servers(mcp), do: mcp |> Servers.all() |> Map.keys() |> Enum.sort()
+
+  @doc "Reads the servers added on other nodes now, as each node does every so often."
+  @spec reconcile(atom()) :: :ok
+  def reconcile(mcp), do: Servers.reconcile(mcp)
+
+  @impl Supervisor
+  def init(opts) do
+    settings = %{
+      mcp: opts.name,
+      servers: opts.servers,
+      store: scoped(opts.store),
+      reconcile: opts.reconcile
+    }
+
+    children = [
+      {Registry, keys: :unique, name: Connection.registry(opts.name)},
+      {DynamicSupervisor, name: Connection.supervisor(opts.name)},
+      {Servers, settings}
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+
+  defp scoped(nil), do: nil
+  defp scoped(store), do: WardrikStore.scope(store, "wardrik_mcp")
+
+  @doc """
+  Gives the tools of the `:servers` named, as `:github` or `["github", "linear"]`, that the
+  `WardrikMCP` started as `:name` reaches.
   """
   @impl WardrikCore.Capability
   def tools(_context, opts) do
@@ -84,6 +119,6 @@ defmodule WardrikMCP do
     opts
     |> Keyword.fetch!(:servers)
     |> List.wrap()
-    |> Enum.flat_map(&Connection.tools(mcp, &1))
+    |> Enum.flat_map(&Servers.tools(mcp, to_string(&1)))
   end
 end

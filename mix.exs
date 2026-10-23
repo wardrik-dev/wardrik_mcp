@@ -61,6 +61,7 @@ defmodule WardrikMCP.MixProject do
   defp deps do
     [
       {:wardrik_core, path: "../wardrik_core"},
+      {:wardrik_store, path: "../wardrik_store"},
       {:anubis_mcp, "~> 2.2"},
       {:telemetry, "~> 1.0"},
       {:mimic, "~> 2.4", only: :test},
