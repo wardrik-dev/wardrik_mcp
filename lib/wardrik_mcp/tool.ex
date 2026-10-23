@@ -67,10 +67,15 @@ defmodule WardrikMCP.Tool do
       else: annotations
   end
 
-  defp call(server, name, arguments, context) do
+  defp call(server, name, arguments, context),
+    do: call(server, name, arguments, context, :first)
+
+  defp call(server, name, arguments, context, attempt) do
     case client(server, context) do
       {:ok, client} ->
-        answered(server, called(server, client, name, arguments), context)
+        server
+        |> called(client, name, arguments)
+        |> refused(server, name, arguments, context, attempt)
 
       {:park, authorization} ->
         {:park, authorization}
@@ -80,6 +85,19 @@ defmodule WardrikMCP.Tool do
     end
   end
 
+  defp refused(called, %Server{credential_name: name} = server, tool, arguments, context, :first)
+       when is_binary(name) do
+    if Connection.refused?(called) do
+      Connection.refuse(server, context)
+      call(server, tool, arguments, context, :again)
+    else
+      answered(server, called, context)
+    end
+  end
+
+  defp refused(called, server, _tool, _arguments, context, _attempt),
+    do: answered(server, called, context)
+
   defp connected(server, context) do
     case Connection.open(server, context) do
       {:ok, _client} -> {:ok, "Connected to #{server.name}. Its tools come with the next turn."}
@@ -88,7 +106,7 @@ defmodule WardrikMCP.Tool do
     end
   end
 
-  defp client(%Server{credential: nil} = server, _context),
+  defp client(%Server{credential_name: nil} = server, _context),
     do: {:ok, Connection.client(server, nil)}
 
   defp client(server, context), do: Connection.open(server, context)

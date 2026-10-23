@@ -104,7 +104,7 @@ defmodule WardrikMCP.Servers do
 
   defp offered(_state, nil), do: []
 
-  defp offered(state, %Server{credential: nil} = server),
+  defp offered(state, %Server{credential_name: nil} = server),
     do: Connection.tools(state.settings.mcp, server.name)
 
   defp offered(state, server) do
@@ -152,7 +152,7 @@ defmodule WardrikMCP.Servers do
   defp started(%{settings: settings} = state, server) do
     server = %{server | mcp: settings.mcp}
 
-    if server.credential == nil, do: connect(settings.mcp, server)
+    if server.credential_name == nil, do: connect(settings.mcp, server)
     %{state | servers: Map.put(state.servers, server.name, server)}
   end
 

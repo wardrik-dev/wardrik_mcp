@@ -8,7 +8,7 @@ defmodule WardrikMCP.Server do
   | `only` | the server's own tool names to offer, as `["search_issues"]` | every tool |
   | `except` | the server's own tool names to leave out | none |
   | `prefix` | what its tools are named under, as `linear` for `linear__search_issues` | its name |
-  | `credential` | the credential each principal reaches it with, as their own | none |
+  | `credential_name` | the name each principal's own credential for it is held under | none |
   | `credential_header`, `credential_scheme` | where the credential goes over HTTP | `authorization`, `Bearer` |
   | `credential_env` | the variable the credential goes in, for a command | none |
   | `timeout` | how long a call may take, in milliseconds | 60 seconds |
@@ -23,7 +23,7 @@ defmodule WardrikMCP.Server do
     :only,
     :except,
     :prefix,
-    :credential,
+    :credential_name,
     :credential_env,
     :cost,
     :mcp,
@@ -41,7 +41,7 @@ defmodule WardrikMCP.Server do
           only: [String.t()] | nil,
           except: [String.t()] | nil,
           prefix: String.t() | nil,
-          credential: String.t() | nil,
+          credential_name: String.t() | nil,
           credential_env: String.t() | nil,
           credential_header: String.t(),
           credential_scheme: String.t(),
@@ -56,7 +56,7 @@ defmodule WardrikMCP.Server do
     :only,
     :except,
     :prefix,
-    :credential,
+    :credential_name,
     :credential_env,
     :cost,
     credential_header: "authorization",

@@ -7,14 +7,14 @@ defmodule WardrikMCP.ServerTest do
     http = {:streamable_http, base_url: "https://mcp.test/mcp", headers: %{"x-app" => "1"}}
 
     assert {:streamable_http, opts} =
-             Server.transport(Server.new!("a", transport: http, credential: "a"), "tok")
+             Server.transport(Server.new!("a", transport: http, credential_name: "a"), "tok")
 
     assert opts[:headers] == %{"x-app" => "1", "authorization" => "Bearer tok"}
 
     server =
       Server.new!("a",
         transport: {:streamable_http, base_url: "https://mcp.test/mcp"},
-        credential: "a",
+        credential_name: "a",
         credential_header: "x-key",
         credential_scheme: ""
       )

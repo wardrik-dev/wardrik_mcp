@@ -11,8 +11,25 @@ defmodule WardrikMCPTest.Tokens do
   end
 end
 
+defmodule WardrikMCPTest.Rotating do
+  @moduledoc "Credentials that hand out the token an agent holds, and a new one once the old is refused."
+  @behaviour WardrikCore.Credentials
+
+  @impl true
+  def resolve("stub", _principal, tokens), do: {:ok, Agent.get(tokens, & &1.token)}
+
+  @impl true
+  def refused("stub", _principal, tokens) do
+    Agent.update(tokens, fn state ->
+      send(state.test, {:refused, state.token})
+      %{state | token: state.token <> "-renewed"}
+    end)
+  end
+end
+
 defmodule WardrikMCPTest do
   use ExUnit.Case, async: true
+  use Mimic
 
   alias WardrikCore.Context
   alias WardrikCore.Tool
@@ -204,7 +221,7 @@ defmodule WardrikMCPTest do
     setup do
       server = [
         transport: @stub,
-        credential: "stub",
+        credential_name: "stub",
         credential_env: "STUB_TOKEN",
         only: ["whoami"]
       ]
@@ -247,7 +264,7 @@ defmodule WardrikMCPTest do
       :ok =
         WardrikMCP.add(@mcp, "broken",
           transport: {:stdio, command: "no-such-mcp-server"},
-          credential: "stub"
+          credential_name: "stub"
         )
 
       ada = context("ada", %{"ada" => "ada-token"})
@@ -260,6 +277,36 @@ defmodule WardrikMCPTest do
       assert {:error, "own didn't connect" <> _} = ask(bare, "connect")
 
       :ok = WardrikMCP.remove(@mcp, "broken")
+    end
+
+    test "reports a credential the server refuses, and calls again with it renewed" do
+      test = self()
+      {:ok, tokens} = Agent.start_link(fn -> %{token: "ada-token", test: test} end)
+
+      ada =
+        Context.new(
+          agent_id: "mcp-test",
+          principal: %WardrikCore.Principal{id: "ada"},
+          credentials: {WardrikMCPTest.Rotating, tokens}
+        )
+
+      assert {:ok, "Connected to own." <> _} = ask(ada, "connect")
+
+      refusal = %Anubis.MCP.Error{data: %{original_reason: {:authorization_required, %{}}}}
+      stub(Anubis.Client, :call_tool, &call_original(Anubis.Client, :call_tool, [&1, &2, &3, &4]))
+
+      expect(Anubis.Client, :call_tool, fn _client, _name, _arguments, _opts ->
+        {:error, refusal}
+      end)
+
+      assert {:ok, "ada-token-renewed", _context} = ask(ada, "whoami")
+      assert_received {:refused, "ada-token"}
+
+      expect(Anubis.Client, :call_tool, 2, fn _client, _name, _arguments, _opts ->
+        {:error, refusal}
+      end)
+
+      assert {:error, _refused, _context} = ask(ada, "whoami")
     end
 
     test "closes every connection to it when it's removed" do

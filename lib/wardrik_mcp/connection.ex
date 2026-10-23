@@ -48,17 +48,55 @@ defmodule WardrikMCP.Connection do
 
   @doc """
   Returns the client the principal the turn acts for reaches `server` with, connecting with their
-  credential, and again when it changed.
+  credential, and again when it changed. A credential the server refuses is reported refused, and
+  fetched once more, renewed or signed in to again.
   """
   @spec open(Server.t(), WardrikCore.Context.t()) ::
           {:ok, GenServer.name()} | {:park, WardrikCore.Authorization.t()} | {:error, term()}
-  def open(server, context) do
-    case WardrikCore.Credentials.fetch(context, server.credential) do
-      {:ok, token} -> opened(server, who(context), token)
+  def open(server, context), do: open(server, context, :first)
+
+  @doc "Reports the principal's credential refused, and closes their connection, so the next open fetches it again."
+  @spec refuse(Server.t(), WardrikCore.Context.t()) :: :ok
+  def refuse(server, context) do
+    :ok = WardrikCore.Credentials.refused(context, server.credential_name)
+
+    for {pid, _hash} <-
+          Registry.lookup(registry(server.mcp), {:connection, server.name, who(context)}) do
+      DynamicSupervisor.terminate_child(supervisor(server.mcp), pid)
+    end
+
+    :ok
+  end
+
+  @doc "Returns whether `answer` is the server refusing the credential it was reached with."
+  @spec refused?(term()) :: boolean()
+  def refused?({:error, %Anubis.MCP.Error{data: %{original_reason: reason}}}),
+    do: authorization_required?(reason)
+
+  def refused?({:error, reason}), do: authorization_required?(reason)
+  def refused?(_answer), do: false
+
+  defp authorization_required?({:authorization_required, _challenge}), do: true
+  defp authorization_required?(_reason), do: false
+
+  defp open(server, context, attempt) do
+    case WardrikCore.Credentials.fetch(context, server.credential_name) do
+      {:ok, token} -> server |> opened(who(context), token) |> retried(server, context, attempt)
       {:park, authorization} -> {:park, authorization}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp retried({:error, reason} = refusal, server, context, :first) do
+    if refused?(refusal) do
+      refuse(server, context)
+      open(server, context, :again)
+    else
+      {:error, reason}
+    end
+  end
+
+  defp retried(opened, _server, _context, _attempt), do: opened
 
   @doc "Stops every connection to the server `name`."
   @spec close(atom(), String.t()) :: :ok

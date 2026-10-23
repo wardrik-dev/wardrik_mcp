@@ -69,7 +69,7 @@ defmodule WardrikMCP do
       :ok =
         WardrikMCP.add(MyApp.MCP, "linear",
           transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
-          credential: "linear"
+          credential_name: "linear"
         )
   """
   @spec add(atom(), String.t(), keyword()) :: :ok | {:error, String.t()}
