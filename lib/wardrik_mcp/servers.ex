@@ -26,15 +26,20 @@ defmodule WardrikMCP.Servers do
 
   @doc "Returns every server, by name."
   @spec all(atom()) :: %{String.t() => Server.t()}
-  def all(mcp), do: GenServer.call(name(mcp), :all)
+  def all(mcp) do
+    mcp
+    |> table()
+    |> :ets.match({{:server, :"$1"}, :"$2"})
+    |> Map.new(fn [name, server] -> {name, server} end)
+  end
 
   @doc "Returns the tools of the server `name`, as the agent the turn acts for may call them."
   @spec tools(atom(), String.t()) :: [WardrikCore.Tool.t()]
-  def tools(mcp, name), do: GenServer.call(name(mcp), {:tools, name})
+  def tools(mcp, name), do: offered(mcp, read(mcp, {:server, name}))
 
-  @doc "Keeps the tools a server reached with a credential listed."
+  @doc "Keeps the tools a server reached with a credential listed, before it returns."
   @spec listed(atom(), String.t(), [map()]) :: :ok
-  def listed(mcp, name, definitions), do: GenServer.cast(name(mcp), {:listed, name, definitions})
+  def listed(mcp, name, definitions), do: GenServer.call(name(mcp), {:listed, name, definitions})
 
   @doc "Reads the servers added on other nodes, now."
   @spec reconcile(atom()) :: :ok
@@ -42,8 +47,10 @@ defmodule WardrikMCP.Servers do
 
   @impl GenServer
   def init(settings) do
+    :ets.new(name(settings.mcp), [:named_table, :protected, read_concurrency: true])
+    true = :ets.insert(name(settings.mcp), {:store, settings.store})
     static = MapSet.new(settings.servers, fn {name, _opts} -> to_string(name) end)
-    {:ok, %{settings: settings, static: static, servers: %{}, listed: %{}}, {:continue, :start}}
+    {:ok, %{settings: settings, static: static, servers: %{}}, {:continue, :start}}
   end
 
   @impl GenServer
@@ -82,18 +89,14 @@ defmodule WardrikMCP.Servers do
     end
   end
 
-  def handle_call(:all, _from, state), do: {:reply, state.servers, state}
   def handle_call(:reconcile, _from, state), do: {:reply, :ok, reconciled(state)}
 
-  def handle_call({:tools, name}, _from, state),
-    do: {:reply, offered(state, Map.get(state.servers, name)), state}
-
-  @impl GenServer
-  def handle_cast({:listed, name, definitions}, %{settings: settings} = state) do
+  def handle_call({:listed, name, definitions}, _from, %{settings: settings} = state) do
     if settings.store,
       do: {:ok, _vsn} = WardrikStore.put(settings.store, "tools/" <> name, definitions)
 
-    {:noreply, %{state | listed: Map.put(state.listed, name, definitions)}}
+    true = :ets.insert(name(settings.mcp), {{:listed, name}, definitions})
+    {:reply, :ok, state}
   end
 
   @impl GenServer
@@ -102,24 +105,41 @@ defmodule WardrikMCP.Servers do
     {:noreply, reconciled(state)}
   end
 
-  defp offered(_state, nil), do: []
+  defp offered(_mcp, nil), do: []
 
-  defp offered(state, %Server{credential_name: nil} = server),
-    do: Connection.tools(state.settings.mcp, server.name)
+  defp offered(mcp, %Server{credential_name: nil} = server),
+    do: Connection.tools(mcp, server.name)
 
-  defp offered(state, server) do
-    case listed(state, server.name) do
+  defp offered(mcp, server) do
+    case listed(mcp, server.name) do
       nil -> [Tool.connect(server)]
       definitions -> Tool.offered(server, definitions)
     end
   end
 
-  defp listed(%{settings: settings} = state, name) do
-    case {Map.get(state.listed, name), settings.store} do
+  defp listed(mcp, name) do
+    case {read(mcp, {:listed, name}), read(mcp, :store)} do
       {nil, nil} -> nil
       {nil, store} -> WardrikStore.get(store, "tools/" <> name)
       {definitions, _store} -> definitions
     end
+  end
+
+  defp read(mcp, key) do
+    case :ets.lookup(table(mcp), key) do
+      [{^key, value}] -> value
+      [] -> nil
+    end
+  end
+
+  defp table(mcp) do
+    name = name(mcp)
+    if :ets.whereis(name) == :undefined, do: raise(ArgumentError, not_started(mcp))
+    name
+  end
+
+  defp not_started(mcp) do
+    "#{inspect(mcp)} isn't started. Add {WardrikMCP, name: #{inspect(mcp)}, servers: servers} to your supervision tree, ahead of what uses it."
   end
 
   defp built(name, opts) do
@@ -153,6 +173,7 @@ defmodule WardrikMCP.Servers do
     server = %{server | mcp: settings.mcp}
 
     if server.credential_name == nil, do: connect(settings.mcp, server)
+    true = :ets.insert(name(settings.mcp), {{:server, server.name}, server})
     %{state | servers: Map.put(state.servers, server.name, server)}
   end
 
@@ -168,7 +189,9 @@ defmodule WardrikMCP.Servers do
 
   defp stopped(state, name) do
     :ok = Connection.close(state.settings.mcp, name)
-    %{state | servers: Map.delete(state.servers, name), listed: Map.delete(state.listed, name)}
+    true = :ets.delete(name(state.settings.mcp), {:server, name})
+    true = :ets.delete(name(state.settings.mcp), {:listed, name})
+    %{state | servers: Map.delete(state.servers, name)}
   end
 
   defp reconciled(%{settings: %{store: nil}} = state), do: state
@@ -199,5 +222,5 @@ defmodule WardrikMCP.Servers do
   defp tick(%{reconcile: :infinity}), do: :ok
   defp tick(%{reconcile: ms}), do: Process.send_after(self(), :reconcile, ms)
 
-  defp name(mcp), do: Module.concat(mcp, Servers)
+  defp name(mcp), do: Module.concat(mcp, "Servers")
 end

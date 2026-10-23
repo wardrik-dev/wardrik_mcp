@@ -40,6 +40,8 @@ children = [
 ]
 ```
 
+Every function takes the name you gave it, and raises saying so where it isn't started.
+
 Each server connects on its own. One that's down offers no tools, and holds up nothing else. It's
 tried again, waiting longer each time, up to a minute.
 
@@ -80,13 +82,14 @@ what any adds:
 ```elixir
 {WardrikMCP, name: MyApp.MCP, store: store, servers: []}
 
-:ok =
-  WardrikMCP.add(MyApp.MCP, "linear",
-    transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
-    prefix: "linear"
-  )
+WardrikMCP.add(MyApp.MCP, "linear", transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"})
+#=> :ok
 
-:ok = WardrikMCP.remove(MyApp.MCP, "linear")
+WardrikMCP.servers(MyApp.MCP)
+#=> ["github", "linear"]
+
+WardrikMCP.remove(MyApp.MCP, "linear")
+#=> :ok
 ```
 
 A server added as the app runs takes its options as data. Each node reads the servers in the store

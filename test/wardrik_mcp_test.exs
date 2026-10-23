@@ -58,6 +58,12 @@ defmodule WardrikMCPTest do
     Enum.each(~w(stub cheap metered hasty growing flaky), &connected/1)
   end
 
+  test "says which MCP isn't started" do
+    assert_raise ArgumentError, ~r/^MyApp.Missing isn't started/, fn ->
+      WardrikMCP.servers(MyApp.Missing)
+    end
+  end
+
   test "offers a server's tools under its name" do
     names = :stub |> tools() |> Enum.map(& &1.name)
 

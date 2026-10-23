@@ -29,13 +29,13 @@ defmodule WardrikMCP.Connection do
   end
 
   @spec registry(atom()) :: atom()
-  def registry(mcp), do: Module.concat(mcp, Registry)
+  def registry(mcp), do: Module.concat(mcp, "Registry")
 
   @spec finch(atom()) :: atom()
-  def finch(mcp), do: Module.concat(mcp, Finch)
+  def finch(mcp), do: Module.concat(mcp, "Finch")
 
   @spec supervisor(atom()) :: atom()
-  def supervisor(mcp), do: Module.concat(mcp, Connections)
+  def supervisor(mcp), do: Module.concat(mcp, "Connections")
 
   @spec tools(atom(), String.t()) :: [WardrikCore.Tool.t()]
   def tools(mcp, name) do
