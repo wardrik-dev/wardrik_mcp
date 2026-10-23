@@ -23,6 +23,16 @@ defmodule WardrikMCP.ServerTest do
     assert opts[:headers] == %{"x-key" => "tok"}
   end
 
+  test "reaches a server over HTTP through its WardrikMCP's own pool" do
+    server = %{
+      Server.new!("a", transport: {:streamable_http, base_url: "https://mcp.test/mcp"})
+      | mcp: MyApp.MCP
+    }
+
+    assert {:streamable_http, opts} = Server.transport(server, nil)
+    assert opts[:finch_name] == WardrikMCP.Connection.finch(MyApp.MCP)
+  end
+
   test "sends a credential in a variable to a command, where it names one" do
     stdio = {:stdio, command: "server"}
 

@@ -88,25 +88,32 @@ defmodule WardrikMCP.Server do
 
   @doc "Returns the transport that reaches the server with `token`, the credential of whoever calls it."
   @spec transport(t(), String.t() | nil) :: {:stdio | :streamable_http, keyword()}
+  def transport(%__MODULE__{transport: {:streamable_http, opts}} = server, token),
+    do: {:streamable_http, opts |> pooled(server.mcp) |> credentialed(server, token)}
+
   def transport(%__MODULE__{transport: transport}, nil), do: transport
-
-  def transport(%__MODULE__{transport: {:streamable_http, opts}} = server, token) do
-    value = String.trim("#{server.credential_scheme} #{token}")
-
-    {:streamable_http,
-     Keyword.update(
-       opts,
-       :headers,
-       %{server.credential_header => value},
-       &Map.put(&1, server.credential_header, value)
-     )}
-  end
 
   def transport(%__MODULE__{transport: {:stdio, opts}, credential_env: env}, token)
       when is_binary(env),
       do: {:stdio, Keyword.update(opts, :env, %{env => token}, &Map.put(&1, env, token))}
 
   def transport(%__MODULE__{transport: transport}, _token), do: transport
+
+  defp pooled(opts, nil), do: opts
+  defp pooled(opts, mcp), do: Keyword.put_new(opts, :finch_name, WardrikMCP.Connection.finch(mcp))
+
+  defp credentialed(opts, _server, nil), do: opts
+
+  defp credentialed(opts, server, token) do
+    value = String.trim("#{server.credential_scheme} #{token}")
+
+    Keyword.update(
+      opts,
+      :headers,
+      %{server.credential_header => value},
+      &Map.put(&1, server.credential_header, value)
+    )
+  end
 
   defp listed?(nil, _name, unset), do: unset
   defp listed?(names, name, _unset), do: name in names

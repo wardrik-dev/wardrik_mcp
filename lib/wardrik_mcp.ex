@@ -97,6 +97,7 @@ defmodule WardrikMCP do
     }
 
     children = [
+      {Finch, name: Connection.finch(opts.name)},
       {Registry, keys: :unique, name: Connection.registry(opts.name)},
       {DynamicSupervisor, name: Connection.supervisor(opts.name)},
       {Servers, settings}
