@@ -14,6 +14,8 @@ defmodule WardrikMCP.Server do
   | `timeout` | how long a call may take, in milliseconds | 60 seconds |
   | `max_result_bytes` | how much of a result the model gets | 128 KB |
   | `cost` | what each call costs, as `[usd: 0.001]`, or a function of the server's result | nothing |
+  | `gated` | which tools can change something, so a person must allow their calls: `true`, `false`, or the server's own tool names, as `["create_*"]` | those it doesn't mark read-only |
+  | `trusted` | `true` where its answers are the deployment's own, so they aren't labelled `"outside"` | `false` |
   """
 
   @enforce_keys [:name, :transport]
@@ -27,6 +29,8 @@ defmodule WardrikMCP.Server do
     :credential_env,
     :cost,
     :mcp,
+    :gated,
+    trusted: false,
     credential_header: "authorization",
     credential_scheme: "Bearer",
     timeout: :timer.seconds(60),
@@ -47,6 +51,8 @@ defmodule WardrikMCP.Server do
           credential_scheme: String.t(),
           cost: cost() | nil,
           mcp: atom() | nil,
+          gated: boolean() | [String.t()] | nil,
+          trusted: boolean(),
           timeout: pos_integer(),
           max_result_bytes: pos_integer()
         }
@@ -59,6 +65,8 @@ defmodule WardrikMCP.Server do
     :credential_name,
     :credential_env,
     :cost,
+    :gated,
+    trusted: false,
     credential_header: "authorization",
     credential_scheme: "Bearer",
     timeout: :timer.seconds(60),
@@ -80,6 +88,17 @@ defmodule WardrikMCP.Server do
   @spec offers?(t(), String.t()) :: boolean()
   def offers?(%__MODULE__{only: only, except: except}, name),
     do: listed?(only, name, true) and not listed?(except, name, false)
+
+  @doc "Says whether the server's tool `name`, `read_only` or not, can change something a person must allow."
+  @spec gated?(t(), String.t(), boolean()) :: boolean()
+  def gated?(%__MODULE__{gated: nil}, _name, read_only), do: not read_only
+  def gated?(%__MODULE__{gated: gated}, _name, _read_only) when is_boolean(gated), do: gated
+  def gated?(%__MODULE__{gated: names}, name, _read_only), do: Enum.any?(names, &glob?(&1, name))
+
+  @doc "Returns the labels every answer of the server holds: `[\"outside\"]` unless it's trusted."
+  @spec labels(t()) :: [String.t()]
+  def labels(%__MODULE__{trusted: true}), do: []
+  def labels(%__MODULE__{trusted: false}), do: ["outside"]
 
   @doc "Returns what the server's tools are named under."
   @spec prefix(t()) :: String.t()
@@ -113,6 +132,11 @@ defmodule WardrikMCP.Server do
       %{server.credential_header => value},
       &Map.put(&1, server.credential_header, value)
     )
+  end
+
+  defp glob?(glob, name) do
+    pattern = glob |> String.split("*") |> Enum.map_join(".*", &Regex.escape/1)
+    Regex.match?(~r/\A#{pattern}\z/, name)
   end
 
   defp listed?(nil, _name, unset), do: unset

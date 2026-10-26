@@ -2,6 +2,9 @@
 
 ## 0.1.0 (unreleased)
 
+- Tools are `gated` unless read-only, or as a server's `gated` says, and their answers are labelled
+  `"outside"` unless the server is `trusted`.
+
 - `WardrikMCP`, which connects to MCP servers over stdio or Streamable HTTP, and gives an agent
   their tools as a WardrikCore capability.
 - Each server connects on its own, and is tried again when it's down. A server whose tools change

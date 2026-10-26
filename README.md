@@ -70,6 +70,8 @@ Schema. When the server says its tools changed, the agent gets the new ones from
 | `prefix` | what its tools are named under | its name |
 | `credential_name` | the name each principal's own credential for it is held under | none |
 | `cost` | what each call costs, as `[usd: 0.001]`, or a function of the server's result | nothing |
+| `gated` | which tools can change something, so a person must allow their calls: `true`, `false`, or the server's own tool names, as `["create_*"]` | those it doesn't mark read-only |
+| `trusted` | `true` where its answers are the deployment's own, so they aren't labelled `"outside"` | `false` |
 
 The model gets a result's structured content where the server sends some, and its text otherwise.
 A longer result is cut, and the model is told. A tool's error reaches the model as the call's error.

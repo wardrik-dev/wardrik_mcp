@@ -46,7 +46,13 @@ defmodule WardrikMCPTest do
        name: @mcp,
        servers: [
          stub: [transport: @stub],
-         cheap: [transport: @stub, only: ["echo", "charge"], cost: [usd: 0.01]],
+         cheap: [
+           transport: @stub,
+           only: ["echo", "charge"],
+           cost: [usd: 0.01],
+           gated: ["ec*"],
+           trusted: true
+         ],
          metered: [transport: @stub, except: ["slow"], cost: &%{usd: &1["_meta"]["usd"]}],
          hasty: [transport: @stub, timeout: 200, max_result_bytes: 101],
          growing: [transport: @stub],
@@ -93,6 +99,17 @@ defmodule WardrikMCPTest do
     assert true == Tool.annotation(charge, :destructive)
     assert nil == Tool.annotation(charge, :idempotent)
     assert nil == Tool.annotation(tool(:stub, "boom"), :read_only)
+  end
+
+  test "gates a tool unless it's read-only, and labels answers outside unless trusted" do
+    assert false == Tool.annotation(tool(:stub, "echo"), :gated)
+    assert true == Tool.annotation(tool(:stub, "charge"), :gated)
+    assert true == Tool.annotation(tool(:stub, "boom"), :gated)
+    assert ["outside"] == Tool.annotation(tool(:stub, "echo"), :labels)
+
+    assert true == Tool.annotation(tool(:cheap, "echo"), :gated)
+    assert false == Tool.annotation(tool(:cheap, "charge"), :gated)
+    assert [] == Tool.annotation(tool(:cheap, "echo"), :labels)
   end
 
   test "a call answers with the server's text" do

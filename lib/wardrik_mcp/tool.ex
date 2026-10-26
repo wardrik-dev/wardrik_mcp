@@ -29,7 +29,7 @@ defmodule WardrikMCP.Tool do
       description: Map.get(definition, "description", name),
       schema: Map.get(definition, "inputSchema", %{"type" => "object"}),
       run: fn arguments, context -> call(server, name, arguments, context) end,
-      annotations: [timeout: server.timeout + @margin] ++ hints(definition)
+      annotations: annotations(server, name, hints(definition))
     )
   end
 
@@ -44,6 +44,14 @@ defmodule WardrikMCP.Tool do
       run: fn _arguments, context -> connected(server, context) end,
       annotations: [read_only: true, idempotent: true]
     )
+  end
+
+  defp annotations(server, name, hints) do
+    [
+      timeout: server.timeout + @margin,
+      gated: Server.gated?(server, name, Keyword.get(hints, :read_only, false)),
+      labels: Server.labels(server)
+    ] ++ hints
   end
 
   defp hints(%{"annotations" => %{} = given}) do

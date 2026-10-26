@@ -32,7 +32,8 @@ defmodule WardrikMCP do
 
   Each tool carries the server's hints as `WardrikCore.Tool` annotations: `read_only`,
   `destructive`, `idempotent` and `open_world`. A read-only tool is idempotent too. A hint the
-  server doesn't give isn't set.
+  server doesn't give isn't set. A tool is `gated` unless it's read-only, or the server's `gated`
+  says otherwise, and its answers are labelled `"outside"` unless the server is `trusted`.
 
   Each server connects on its own. One that's down offers no tools, and holds up nothing else. It's
   tried again, waiting longer each time, up to a minute. A server that says its tools changed is
