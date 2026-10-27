@@ -130,8 +130,8 @@ defmodule WardrikMCPTest do
     assert text =~ "[Cut to 101 of 2000 bytes.]"
   end
 
-  test "a call that takes too long answers with an error" do
-    assert {:error, _message, _context} = call(:hasty, "slow")
+  test "a call that fails in passing raises, for the tool runner to try again" do
+    assert_raise WardrikMCP.Unavailable, ~r/hasty failed/, fn -> call(:hasty, "slow") end
   end
 
   test "a server's cost is measured on the call's step" do

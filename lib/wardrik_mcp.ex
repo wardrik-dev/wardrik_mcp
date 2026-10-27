@@ -33,7 +33,10 @@ defmodule WardrikMCP do
   Each tool carries the server's hints as `WardrikCore.Tool` annotations: `read_only`,
   `destructive`, `idempotent` and `open_world`. A read-only tool is idempotent too. A hint the
   server doesn't give isn't set. A tool is `gated` unless it's read-only, or the server's `gated`
-  says otherwise, and its answers are labelled `"outside"` unless the server is `trusted`.
+  says otherwise, and its answers are labelled `"outside"` unless the server is `trusted`. A call
+  that fails in passing, as on a dropped connection, a timeout or a server error, raises
+  `WardrikMCP.Unavailable`, so the tool runner tries a read-only or idempotent tool's call again;
+  see `WardrikCore.Retry`. What a tool answers as an error is its answer.
 
   Each server connects on its own. One that's down offers no tools, and holds up nothing else. It's
   tried again, waiting longer each time, up to a minute. A server that says its tools changed is
@@ -123,4 +126,9 @@ defmodule WardrikMCP do
     |> List.wrap()
     |> Enum.flat_map(&Servers.tools(mcp, to_string(&1)))
   end
+end
+
+defmodule WardrikMCP.Unavailable do
+  @moduledoc "An MCP server failed in passing, so trying the call again may succeed."
+  defexception [:message]
 end
