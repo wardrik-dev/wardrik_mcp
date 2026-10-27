@@ -79,7 +79,9 @@ defmodule WardrikMCP.Connection do
   def refused?({:error, reason}), do: authorization_required?(reason)
   def refused?(_answer), do: false
 
+  # Anubis.Client 2.2 names the challenge; 2.1 hands back the bare status.
   defp authorization_required?({:authorization_required, _challenge}), do: true
+  defp authorization_required?({:http_error, status, _body}) when status in [401, 403], do: true
   defp authorization_required?(_reason), do: false
 
   defp open(server, context, attempt) do
