@@ -240,6 +240,43 @@ defmodule WardrikMCPTest do
     end
   end
 
+  describe "servers added under a check" do
+    setup do
+      test = self()
+      {:ok, answers} = Agent.start_link(fn -> [:ok, {:error, "it's private"}] end)
+
+      check = fn url ->
+        send(test, {:checked, url})
+        Agent.get_and_update(answers, &answered/1)
+      end
+
+      start_supervised!({WardrikMCP, name: WardrikMCPTest.Checked, check: check}, id: :checked)
+      :ok
+    end
+
+    test "holds each URL to the check as it's added, and as each connection starts" do
+      url = "https://mcp.example.com/mcp"
+
+      assert :ok =
+               WardrikMCP.add(WardrikMCPTest.Checked, "remote",
+                 transport: {:streamable_http, base_url: url}
+               )
+
+      assert_receive {:checked, ^url}
+      assert_receive {:checked, ^url}
+
+      assert {:error, "https://mcp.example.com/mcp can't be reached: it's private"} =
+               WardrikMCP.add(WardrikMCPTest.Checked, "again",
+                 transport: {:streamable_http, base_url: url}
+               )
+    end
+
+    test "reaches a server added as the app runs over HTTP alone" do
+      assert {:error, "a server added as the app runs is reached over HTTP"} =
+               WardrikMCP.add(WardrikMCPTest.Checked, "local", transport: @stub)
+    end
+  end
+
   describe "a server each principal reaches with their own credential" do
     setup do
       server = [
@@ -340,6 +377,9 @@ defmodule WardrikMCPTest do
       assert own(ada) == []
     end
   end
+
+  defp answered([answer]), do: {answer, [answer]}
+  defp answered([answer | rest]), do: {answer, rest}
 
   defp flaky_client do
     [{connection, _hash}] =

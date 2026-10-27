@@ -30,6 +30,7 @@ defmodule WardrikMCP.Server do
     :cost,
     :mcp,
     :gated,
+    :check,
     trusted: false,
     credential_header: "authorization",
     credential_scheme: "Bearer",
@@ -52,6 +53,7 @@ defmodule WardrikMCP.Server do
           cost: cost() | nil,
           mcp: atom() | nil,
           gated: boolean() | [String.t()] | nil,
+          check: (String.t() -> :ok | {:error, String.t()}) | nil,
           trusted: boolean(),
           timeout: pos_integer(),
           max_result_bytes: pos_integer()
@@ -82,6 +84,22 @@ defmodule WardrikMCP.Server do
       __MODULE__,
       [name: to_string(name), transport: Keyword.fetch!(opts, :transport)] ++ opts
     )
+  end
+
+  @doc "Says whether the server may be reached now, as the `check` it was added under says."
+  @spec reachable(t()) :: :ok | {:error, String.t()}
+  def reachable(%__MODULE__{check: nil}), do: :ok
+
+  def reachable(%__MODULE__{transport: {:stdio, _opts}}),
+    do: {:error, "a server added as the app runs is reached over HTTP"}
+
+  def reachable(%__MODULE__{transport: {:streamable_http, opts}, check: check}) do
+    url = Keyword.fetch!(opts, :base_url)
+
+    case check.(url) do
+      :ok -> :ok
+      {:error, why} -> {:error, "#{url} can't be reached: #{why}"}
+    end
   end
 
   @doc "Says whether the server offers its tool `name` to agents."

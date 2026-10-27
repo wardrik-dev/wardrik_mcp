@@ -2,7 +2,8 @@ defmodule WardrikMCP.Servers do
   @moduledoc """
   Holds the servers a `WardrikMCP` reaches, those it started with and those added as it runs, and
   the tools each reached with a credential last listed. Servers added as it runs are kept in the
-  store, and every node reads them again every so often.
+  store, and every node reads them again every so often. They're held to the `:check`, where it's
+  given, as they're added and as each connection to them starts.
   """
 
   use GenServer
@@ -66,8 +67,9 @@ defmodule WardrikMCP.Servers do
 
   @impl GenServer
   def handle_call({:add, name, opts}, _from, state) do
-    with {:ok, server} <- built(name, opts),
+    with {:ok, server} <- built(state.settings, name, opts),
          :ok <- new(state, name),
+         :ok <- Server.reachable(server),
          :ok <- kept(state.settings, name, opts) do
       {:reply, :ok, started(state, server)}
     else
@@ -142,13 +144,15 @@ defmodule WardrikMCP.Servers do
     "#{inspect(mcp)} isn't started. Add {WardrikMCP, name: #{inspect(mcp)}, servers: servers} to your supervision tree, ahead of what uses it."
   end
 
-  defp built(name, opts) do
+  defp built(settings, name, opts) do
     if Enum.any?(Keyword.values(opts), &is_function/1),
       do: {:error, "a server added as the app runs takes its options as data"},
-      else: {:ok, Server.new!(name, opts)}
+      else: {:ok, added(settings, name, opts)}
   rescue
     error in ArgumentError -> {:error, Exception.message(error)}
   end
+
+  defp added(settings, name, opts), do: %{Server.new!(name, opts) | check: settings.check}
 
   defp new(state, name) do
     if Map.has_key?(state.servers, name),
@@ -207,7 +211,7 @@ defmodule WardrikMCP.Servers do
       Enum.reduce(kept, state, fn {name, key}, state ->
         if Map.has_key?(state.servers, name),
           do: state,
-          else: started(state, Server.new!(name, WardrikStore.get(settings.store, key)))
+          else: started(state, added(settings, name, WardrikStore.get(settings.store, key)))
       end)
 
     gone =

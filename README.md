@@ -97,6 +97,17 @@ WardrikMCP.remove(MyApp.MCP, "linear")
 A server added as the app runs takes its options as data. Each node reads the servers in the store
 again every minute, or when you call `reconcile/1`.
 
+Where others name the URLs, as the users of a hosted app do, give a `check:`. Each URL of a server
+added as the app runs is held to it as it's added and as each connection to it starts, and a
+command is never run:
+
+```elixir
+{WardrikMCP, name: MyApp.MCP, store: store, check: &MyApp.Egress.public/1}
+
+WardrikMCP.add(MyApp.MCP, "internal", transport: {:streamable_http, base_url: "https://10.0.0.5/mcp"})
+#=> {:error, "https://10.0.0.5/mcp can't be reached: 10.0.0.5 is a private address"}
+```
+
 ## Reach a server as each person
 
 Give a `credential_name`, and each principal reaches the server with their own credential of that

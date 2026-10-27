@@ -57,11 +57,25 @@ defmodule WardrikMCP do
   @doc """
   Starts a connection to each of the `:servers`, a keyword list of name and options, under the
   `:name` agents reach them by. Takes `:store`, a `WardrikStore` to keep servers added as the app
-  runs in, and `:reconcile`, how often each node reads them again, a minute unless set.
+  runs in, `:reconcile`, how often each node reads them again, a minute unless set, and `:check`.
+
+  `:check` is a function each URL of a server added as the app runs is held to, as it's added and
+  as each connection to it starts, answering `:ok` or `{:error, why}`. Give one where the URLs are
+  named by others, as the orgs of a hosted app add servers to the Wardrik hub, which lets through
+  `https` URLs at public addresses alone. With a check, a server added as the app runs is reached over
+  HTTP, never a command. Every server is reached unless it's given.
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
-    opts = Keyword.validate!(opts, [:name, servers: [], store: nil, reconcile: :timer.minutes(1)])
+    opts =
+      Keyword.validate!(opts, [
+        :name,
+        servers: [],
+        store: nil,
+        reconcile: :timer.minutes(1),
+        check: nil
+      ])
+
     name = Keyword.fetch!(opts, :name)
     Supervisor.start_link(__MODULE__, Map.new(opts), name: name)
   end
@@ -97,7 +111,8 @@ defmodule WardrikMCP do
       mcp: opts.name,
       servers: opts.servers,
       store: scoped(opts.store),
-      reconcile: opts.reconcile
+      reconcile: opts.reconcile,
+      check: opts.check
     }
 
     children = [

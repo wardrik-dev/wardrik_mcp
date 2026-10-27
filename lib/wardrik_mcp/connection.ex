@@ -224,8 +224,10 @@ defmodule WardrikMCP.Connection do
   end
 
   defp connect(state) do
-    case start_client(state) do
-      {:ok, client} -> refresh(%{state | client: client})
+    with :ok <- Server.reachable(state.server),
+         {:ok, client} <- start_client(state) do
+      refresh(%{state | client: client})
+    else
       {:error, reason} -> failed(state, reason)
     end
   end
