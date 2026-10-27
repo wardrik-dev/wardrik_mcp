@@ -13,6 +13,9 @@ defmodule WardrikMCP.Connection do
   @last_retry :timer.minutes(1)
   @ready :timer.seconds(30)
   @idle :timer.minutes(5)
+  # 2026-07-28 asks clients to mirror marked arguments into Mcp-Param-* headers, which
+  # Anubis.Client doesn't, so servers that mark any refuse every call.
+  @protocol_version "2025-11-25"
 
   @spec child_spec({Server.t(), String.t() | nil, String.t() | nil}) :: Supervisor.child_spec()
   def child_spec({server, who, _token} = args),
@@ -251,7 +254,8 @@ defmodule WardrikMCP.Connection do
         "name" => "wardrik_mcp #{inspect(server.mcp)} #{slot}",
         "version" => version()
       },
-      capabilities: %{}
+      capabilities: %{},
+      protocol_version: @protocol_version
     )
   end
 
