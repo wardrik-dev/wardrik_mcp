@@ -22,4 +22,20 @@ defmodule WardrikMCP.ResultTest do
 
     assert {:error, ":closed"} = Result.answer({:error, :closed}, 1024)
   end
+
+  test "answers a refused request with what the server said, and doesn't call it passing" do
+    body =
+      ~s({"jsonrpc":"2.0","id":"1","error":{"code":-32020,"message":"missing Mcp-Param-owner header"}})
+
+    error = Error.transport(:send_failure, %{original_reason: {:http_error, 400, body}})
+
+    assert {:error, "Send Failure: HTTP 400: missing Mcp-Param-owner header"} =
+             Result.answer({:error, error}, 1024)
+
+    refute Result.passing?(error)
+
+    assert Result.passing?(
+             Error.transport(:send_failure, %{original_reason: {:http_error, 503, ""}})
+           )
+  end
 end

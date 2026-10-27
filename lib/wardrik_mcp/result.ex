@@ -15,11 +15,33 @@ defmodule WardrikMCP.Result do
 
   def answer({:ok, %Response{result: result}}, limit), do: {:ok, text(result, limit)}
 
-  def answer({:error, %Error{message: message}}, _limit) when is_binary(message),
-    do: {:error, message}
+  def answer({:error, %Error{} = error}, _limit), do: {:error, message(error)}
 
   def answer({:error, reason}, _limit) when is_binary(reason), do: {:error, reason}
   def answer({:error, reason}, _limit), do: {:error, inspect(reason)}
+
+  @doc "Returns what went wrong, with what the server answered when it refused the request."
+  @spec message(Error.t()) :: String.t()
+  def message(%Error{message: message, data: %{original_reason: {:http_error, status, body}}}),
+    do: "#{message}: HTTP #{status}: #{said(body)}"
+
+  def message(%Error{message: message}), do: message
+
+  @doc "Returns whether `error` may pass if the call is tried again, unlike a request the server refused."
+  @spec passing?(Error.t()) :: boolean()
+  def passing?(%Error{data: %{original_reason: {:http_error, status, _body}}}),
+    do: status not in 400..499
+
+  def passing?(%Error{}), do: true
+
+  defp said(body) when is_binary(body) do
+    case JSON.decode(body) do
+      {:ok, %{"error" => %{"message" => message}}} when is_binary(message) -> message
+      _other -> body
+    end
+  end
+
+  defp said(body), do: inspect(body)
 
   defp text(result, limit) do
     result

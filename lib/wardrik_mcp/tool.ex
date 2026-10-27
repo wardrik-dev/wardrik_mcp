@@ -121,10 +121,23 @@ defmodule WardrikMCP.Tool do
 
   defp client(server, context), do: Connection.open(server, context)
 
-  defp answered(server, {:error, %Anubis.MCP.Error{code: @server_error} = error}, _context),
-    do: raise(WardrikMCP.Unavailable, "The MCP server #{server.name} failed: #{error.message}")
+  defp answered(
+         server,
+         {:error, %Anubis.MCP.Error{code: @server_error} = error} = called,
+         context
+       ) do
+    if Result.passing?(error),
+      do:
+        raise(
+          WardrikMCP.Unavailable,
+          "The MCP server #{server.name} failed: #{Result.message(error)}"
+        ),
+      else: answer(server, called, context)
+  end
 
-  defp answered(server, called, context) do
+  defp answered(server, called, context), do: answer(server, called, context)
+
+  defp answer(server, called, context) do
     {tag, output} = Result.answer(called, server.max_result_bytes)
     {tag, output, Context.measure(context, cost(server.cost, called))}
   end
