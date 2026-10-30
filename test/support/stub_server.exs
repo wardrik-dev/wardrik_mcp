@@ -49,6 +49,12 @@ defmodule StubServer do
     "inputSchema" => %{"type" => "object", "properties" => %{}}
   }
 
+  @env %{
+    "name" => "env",
+    "description" => "Says the environment it was started with.",
+    "inputSchema" => %{"type" => "object", "properties" => %{}}
+  }
+
   @grown %{
     "name" => "grown",
     "description" => "The tool grow added.",
@@ -77,7 +83,10 @@ defmodule StubServer do
   end
 
   defp respond(%{"method" => "tools/list", "id" => id}, grown) do
-    reply(id, %{"tools" => if(grown, do: @tools ++ [@whoami, @grown], else: @tools ++ [@whoami])})
+    reply(id, %{
+      "tools" => if(grown, do: @tools ++ [@whoami, @env, @grown], else: @tools ++ [@whoami, @env])
+    })
+
     grown
   end
 
@@ -105,6 +114,9 @@ defmodule StubServer do
 
   defp called("whoami", _arguments, id, grown),
     do: text(id, System.get_env("STUB_TOKEN", "nobody"), grown)
+
+  defp called("env", _arguments, id, grown),
+    do: text(id, JSON.encode!(System.get_env()), grown)
 
   defp called("big", _arguments, id, grown), do: text(id, String.duplicate("é", 1000), grown)
   defp called("slow", _arguments, _id, grown), do: grown

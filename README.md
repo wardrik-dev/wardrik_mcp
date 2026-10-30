@@ -40,6 +40,10 @@ children = [
 ]
 ```
 
+A command doesn't inherit the app's environment. It gets its `env` and only `HOME`, `LANG`,
+`LC_ALL`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `TMPDIR` and `USER`; it's started through `env`,
+which unsets the rest. Give it anything else it needs in `env`.
+
 Each server connects on its own. A server that's down offers no tools and doesn't block the
 others. It's retried with backoff, up to a minute between tries.
 

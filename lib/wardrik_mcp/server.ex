@@ -16,7 +16,9 @@ defmodule WardrikMCP.Server do
   ## Options
 
     * `:transport` - required. `{:stdio, command: ..., args: ..., env: ...}` or
-      `{:streamable_http, base_url: ..., headers: ...}`.
+      `{:streamable_http, base_url: ..., headers: ...}`. A command gets its `env` and only these
+      of the app's own variables: `HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `SHELL`, `TERM`,
+      `TMPDIR` and `USER`. It's started through `env`, which unsets the rest.
     * `:only` - the server's tool names to offer, as `["search_issues"]`. Every tool unless set.
     * `:except` - the server's tool names to leave out.
     * `:prefix` - the prefix for tool names, as `"linear"` for `linear__search_issues`. The
@@ -92,6 +94,8 @@ defmodule WardrikMCP.Server do
     max_result_bytes: 128 * 1024
   ]
 
+  @inherited ~w(HOME LANG LC_ALL LOGNAME PATH SHELL TERM TMPDIR USER)
+
   @doc "Builds a server named `name`. Raises `ArgumentError` on an unknown option."
   @spec new!(atom() | String.t(), keyword()) :: t()
   def new!(name, opts) do
@@ -149,16 +153,27 @@ defmodule WardrikMCP.Server do
   def transport(%__MODULE__{transport: {:streamable_http, opts}} = server, token),
     do: {:streamable_http, opts |> pooled(server.mcp) |> credentialed(server, token)}
 
-  def transport(%__MODULE__{transport: transport}, nil), do: transport
-
   def transport(%__MODULE__{transport: {:stdio, opts}, credential_env: env}, token)
-      when is_binary(env),
-      do: {:stdio, Keyword.update(opts, :env, %{env => token}, &Map.put(&1, env, token))}
+      when is_binary(env) and is_binary(token),
+      do:
+        {:stdio,
+         opts |> Keyword.update(:env, %{env => token}, &Map.put(&1, env, token)) |> isolated()}
 
-  def transport(%__MODULE__{transport: transport}, _token), do: transport
+  def transport(%__MODULE__{transport: {:stdio, opts}}, _token), do: {:stdio, isolated(opts)}
 
   defp pooled(opts, nil), do: opts
   defp pooled(opts, mcp), do: Keyword.put_new(opts, :finch_name, WardrikMCP.Connection.finch(mcp))
+
+  defp isolated(opts) do
+    kept = @inherited ++ Map.keys(opts[:env] || %{})
+    unset = for {name, _value} <- System.get_env(), name not in kept, do: ["-u", name]
+    command = System.find_executable(opts[:command]) || opts[:command]
+
+    Keyword.merge(opts,
+      command: "env",
+      args: List.flatten(unset) ++ ["--", command | opts[:args] || []]
+    )
+  end
 
   defp credentialed(opts, _server, nil), do: opts
 

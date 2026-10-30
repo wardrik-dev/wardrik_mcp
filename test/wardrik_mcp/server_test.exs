@@ -41,8 +41,26 @@ defmodule WardrikMCP.ServerTest do
 
     assert opts[:env] == %{"TOKEN" => "tok"}
 
-    assert Server.transport(Server.new!("a", transport: stdio), "tok") == stdio
-    assert Server.transport(Server.new!("a", transport: stdio), nil) == stdio
+    assert {:stdio, opts} = Server.transport(Server.new!("a", transport: stdio), "tok")
+    assert opts[:env] == nil
+  end
+
+  test "starts a command through env, unsetting what it isn't given" do
+    System.put_env("SERVER_TEST_SENTINEL", "secret")
+    on_exit(fn -> System.delete_env("SERVER_TEST_SENTINEL") end)
+
+    stdio = {:stdio, command: "server", args: ["stdio"], env: %{"SERVER_TEST_SENTINEL" => "mine"}}
+    assert {:stdio, opts} = Server.transport(Server.new!("a", transport: stdio), nil)
+
+    assert opts[:command] == "env"
+    assert ["--", "server", "stdio"] = Enum.take(opts[:args], -3)
+    refute "SERVER_TEST_SENTINEL" in opts[:args]
+    refute "PATH" in opts[:args]
+
+    assert {:stdio, opts} =
+             Server.transport(Server.new!("a", transport: {:stdio, command: "server"}), nil)
+
+    assert "SERVER_TEST_SENTINEL" in opts[:args]
   end
 
   test "names its tools under its prefix, or its name" do

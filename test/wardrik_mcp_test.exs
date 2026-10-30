@@ -155,7 +155,7 @@ defmodule WardrikMCPTest do
     refute tool(:growing, "grown")
     assert {:ok, "grown", _context} = call(:growing, "grow")
 
-    assert_receive {:tools, @mcp, "growing", %{count: 9}}, 5_000
+    assert_receive {:tools, @mcp, "growing", %{count: 10}}, 5_000
     assert tool(:growing, "grown")
   end
 
@@ -275,6 +275,29 @@ defmodule WardrikMCPTest do
       assert {:error, "a server added as the app runs is reached over HTTP"} =
                WardrikMCP.add(WardrikMCPTest.Checked, "local", transport: @stub)
     end
+  end
+
+  test "starts a command with the variables it's given, and only a few of its own" do
+    System.put_env("WARDRIK_MCP_SENTINEL", "secret")
+    on_exit(fn -> System.delete_env("WARDRIK_MCP_SENTINEL") end)
+    listen()
+
+    {:stdio, opts} = @stub
+
+    :ok =
+      WardrikMCP.add(@mcp, "isolated",
+        transport: {:stdio, [env: %{"STUB_SETTING" => "set"}] ++ opts}
+      )
+
+    on_exit(fn -> WardrikMCP.remove(@mcp, "isolated") end)
+    connected("isolated")
+
+    assert {:ok, env, _context} = call("isolated", "env")
+    env = JSON.decode!(env)
+
+    assert env["STUB_SETTING"] == "set"
+    assert env["PATH"] == System.get_env("PATH")
+    assert env["WARDRIK_MCP_SENTINEL"] == nil
   end
 
   describe "a server each principal reaches with their own credential" do
