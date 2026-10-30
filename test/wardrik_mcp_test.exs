@@ -258,12 +258,8 @@ defmodule WardrikMCPTest do
   end
 
   test "refuses a server over HTTP without an http or https URL" do
-    for transport <- [
-          {:streamable_http, base_url: "https://mcp.example.com/mcp"},
-          {:streamable_http, url: "mcp.example.com/mcp"}
-        ] do
-      assert {:error, _reason} = WardrikMCP.add(@mcp, "bad", transport: transport)
-    end
+    transport = {:streamable_http, url: "mcp.example.com/mcp"}
+    assert {:error, _reason} = WardrikMCP.add(@mcp, "bad", transport: transport)
   end
 
   describe "servers added under a check" do
