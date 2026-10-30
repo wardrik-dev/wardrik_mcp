@@ -1,9 +1,13 @@
 defmodule WardrikMCP.Servers do
   @moduledoc """
-  Holds the servers a `WardrikMCP` reaches, those it started with and those added as it runs, and
-  the tools each reached with a credential last listed. Servers added as it runs are kept in the
-  store, and every node reads them again every so often. They're held to the `:check`, where it's
-  given, as they're added and as each connection to them starts.
+  Tracks a `WardrikMCP`'s servers and their tools.
+
+  It holds the servers it started with and those added at runtime. For servers with a
+  `credential_name`, it also holds the tools last listed.
+
+  Servers added at runtime are kept in the store. Each node re-reads the store on the
+  `:reconcile` interval. If a `:check` is given, it's called when a server is added and each time a
+  connection starts.
   """
 
   use GenServer
@@ -12,20 +16,20 @@ defmodule WardrikMCP.Servers do
   alias WardrikMCP.Server
   alias WardrikMCP.Tool
 
-  @doc "Starts the servers `settings` describe."
+  @doc "Starts the server registry and the servers in `settings`."
   @spec start_link(map()) :: GenServer.on_start()
   def start_link(settings),
     do: GenServer.start_link(__MODULE__, settings, name: name(settings.mcp))
 
-  @doc "Adds the server `name`, on every node where it's given a store."
+  @doc "Adds the server `name`. With a store, every node reaches it."
   @spec add(atom(), String.t(), keyword()) :: :ok | {:error, String.t()}
   def add(mcp, name, opts), do: GenServer.call(name(mcp), {:add, name, opts})
 
-  @doc "Removes the server `name`, added as the app ran."
+  @doc "Removes the server `name`. Only servers added at runtime can be removed."
   @spec remove(atom(), String.t()) :: :ok | {:error, :not_found | String.t()}
   def remove(mcp, name), do: GenServer.call(name(mcp), {:remove, name})
 
-  @doc "Returns every server, by name."
+  @doc "Returns every server, by name. Raises `ArgumentError` if `mcp` isn't started."
   @spec all(atom()) :: %{String.t() => Server.t()}
   def all(mcp) do
     mcp
@@ -34,15 +38,15 @@ defmodule WardrikMCP.Servers do
     |> Map.new(fn [name, server] -> {name, server} end)
   end
 
-  @doc "Returns the tools of the server `name`, as the agent the turn acts for may call them."
+  @doc "Returns the tools of the server `name`."
   @spec tools(atom(), String.t()) :: [WardrikCore.Tool.t()]
   def tools(mcp, name), do: offered(mcp, read(mcp, {:server, name}))
 
-  @doc "Keeps the tools a server reached with a credential listed, before it returns."
+  @doc "Stores the tools listed by a server reached with a credential."
   @spec listed(atom(), String.t(), [map()]) :: :ok
   def listed(mcp, name, definitions), do: GenServer.call(name(mcp), {:listed, name, definitions})
 
-  @doc "Reads the servers added on other nodes, now."
+  @doc "Re-reads the servers in the store now."
   @spec reconcile(atom()) :: :ok
   def reconcile(mcp), do: GenServer.call(name(mcp), :reconcile)
 

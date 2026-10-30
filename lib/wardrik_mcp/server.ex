@@ -1,21 +1,38 @@
 defmodule WardrikMCP.Server do
   @moduledoc """
-  A server is an MCP server an agent's tools come from, and how to reach it.
+  An MCP server and how to reach it.
 
-  | Key | Takes | Unless set |
-  | --- | --- | --- |
-  | `transport` | `{:stdio, command: "…", args: […], env: %{…}}` or `{:streamable_http, base_url: "…", headers: %{…}}` | required |
-  | `only` | the server's own tool names to offer, as `["search_issues"]` | every tool |
-  | `except` | the server's own tool names to leave out | none |
-  | `prefix` | what its tools are named under, as `linear` for `linear__search_issues` | its name |
-  | `credential_name` | the name each principal's own credential for it is held under | none |
-  | `credential_header`, `credential_scheme` | where the credential goes over HTTP | `authorization`, `Bearer` |
-  | `credential_env` | the variable the credential goes in, for a command | none |
-  | `timeout` | how long a call may take, in milliseconds | 60 seconds |
-  | `max_result_bytes` | how much of a result the model gets | 128 KB |
-  | `cost` | what each call costs, as `[usd: 0.001]`, or a function of the server's result | nothing |
-  | `gated` | which tools can change something, so a person must allow their calls: `true`, `false`, or the server's own tool names, as `["create_*"]` | those it doesn't mark read-only |
-  | `trusted` | `true` where its answers are the deployment's own, so they aren't labelled `"outside"` | `false` |
+      github: [
+        transport: {:stdio, command: "github-mcp-server", args: ["stdio"], env: %{}},
+        only: ["search_issues", "create_issue"],
+        gated: ["create_*"]
+      ]
+
+      linear: [
+        transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp", headers: %{}},
+        credential_name: "linear"
+      ]
+
+  ## Options
+
+    * `:transport` - required. `{:stdio, command: ..., args: ..., env: ...}` or
+      `{:streamable_http, base_url: ..., headers: ...}`.
+    * `:only` - the server's tool names to offer, as `["search_issues"]`. Every tool unless set.
+    * `:except` - the server's tool names to leave out.
+    * `:prefix` - the prefix for tool names, as `"linear"` for `linear__search_issues`. The
+      server's name unless set.
+    * `:credential_name` - the credential each principal reaches the server with. See
+      `WardrikCore.Credentials`.
+    * `:credential_header` - the HTTP header the credential goes in. `"authorization"` unless set.
+    * `:credential_scheme` - the scheme before the credential. `"Bearer"` unless set.
+    * `:credential_env` - the environment variable the credential goes in, for a command.
+    * `:timeout` - milliseconds a call may take. `60_000` unless set.
+    * `:max_result_bytes` - bytes of a result the model gets. `131_072` unless set.
+    * `:cost` - each call's cost, as `[usd: 0.001]`, or a function of the server's result.
+    * `:gated` - which tools need a person's approval: `true`, `false`, or tool name globs, as
+      `["create_*"]`. Tools not marked read-only unless set.
+    * `:trusted` - `true` to treat answers as the deployment's own, not labelled `"outside"`.
+      `false` unless set.
   """
 
   @enforce_keys [:name, :transport]
@@ -75,7 +92,7 @@ defmodule WardrikMCP.Server do
     max_result_bytes: 128 * 1024
   ]
 
-  @doc "Builds a server named `name` from its options. Raises on an option it doesn't know."
+  @doc "Builds a server named `name`. Raises `ArgumentError` on an unknown option."
   @spec new!(atom() | String.t(), keyword()) :: t()
   def new!(name, opts) do
     opts = Keyword.validate!(opts, @options)
@@ -86,7 +103,11 @@ defmodule WardrikMCP.Server do
     )
   end
 
-  @doc "Says whether the server may be reached now, as the `check` it was added under says."
+  @doc """
+  Returns `:ok` if the server may be reached now, or `{:error, reason}`.
+
+  Always `:ok` without a `check`. With one, a command is refused and the URL must pass it.
+  """
   @spec reachable(t()) :: :ok | {:error, String.t()}
   def reachable(%__MODULE__{check: nil}), do: :ok
 
@@ -102,28 +123,28 @@ defmodule WardrikMCP.Server do
     end
   end
 
-  @doc "Says whether the server offers its tool `name` to agents."
+  @doc "Returns whether the server offers its tool `name`, given `only` and `except`."
   @spec offers?(t(), String.t()) :: boolean()
   def offers?(%__MODULE__{only: only, except: except}, name),
     do: listed?(only, name, true) and not listed?(except, name, false)
 
-  @doc "Says whether the server's tool `name`, `read_only` or not, can change something a person must allow."
+  @doc "Returns whether calls to the tool `name` need a person's approval."
   @spec gated?(t(), String.t(), boolean()) :: boolean()
   def gated?(%__MODULE__{gated: nil}, _name, read_only), do: not read_only
   def gated?(%__MODULE__{gated: gated}, _name, _read_only) when is_boolean(gated), do: gated
   def gated?(%__MODULE__{gated: names}, name, _read_only), do: Enum.any?(names, &glob?(&1, name))
 
-  @doc "Returns the labels every answer of the server holds: `[\"outside\"]` unless it's trusted."
+  @doc "Returns the labels on the server's answers: `[\"outside\"]`, or `[]` if it's trusted."
   @spec labels(t()) :: [String.t()]
   def labels(%__MODULE__{trusted: true}), do: []
   def labels(%__MODULE__{trusted: false}), do: ["outside"]
 
-  @doc "Returns what the server's tools are named under."
+  @doc "Returns the prefix for the server's tool names."
   @spec prefix(t()) :: String.t()
   def prefix(%__MODULE__{prefix: nil, name: name}), do: name
   def prefix(%__MODULE__{prefix: prefix}), do: prefix
 
-  @doc "Returns the transport that reaches the server with `token`, the credential of whoever calls it."
+  @doc "Returns the transport options for reaching the server with the caller's `token`."
   @spec transport(t(), String.t() | nil) :: {:stdio | :streamable_http, keyword()}
   def transport(%__MODULE__{transport: {:streamable_http, opts}} = server, token),
     do: {:streamable_http, opts |> pooled(server.mcp) |> credentialed(server, token)}

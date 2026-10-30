@@ -50,15 +50,16 @@ defmodule WardrikMCP.Connection do
     do: {:via, Registry, {registry(server.mcp), {:client, server.name, who}}}
 
   @doc """
-  Returns the client the principal the turn acts for reaches `server` with, connecting with their
-  credential, and again when it changed. A credential the server refuses is reported refused, and
-  fetched once more, renewed or signed in to again.
+  Returns the client for the principal the turn acts for.
+
+  Connects with their credential, and reconnects if it changed. If the server refuses the
+  credential, it's reported refused and fetched once more.
   """
   @spec open(Server.t(), WardrikCore.Context.t()) ::
           {:ok, GenServer.name()} | {:park, WardrikCore.Authorization.t()} | {:error, term()}
   def open(server, context), do: open(server, context, :first)
 
-  @doc "Reports the principal's credential refused, and closes their connection, so the next open fetches it again."
+  @doc "Reports the principal's credential refused and closes their connection."
   @spec refuse(Server.t(), WardrikCore.Context.t()) :: :ok
   def refuse(server, context) do
     :ok = WardrikCore.Credentials.refused(context, server.credential_name)
@@ -71,7 +72,7 @@ defmodule WardrikMCP.Connection do
     :ok
   end
 
-  @doc "Returns whether `answer` is the server refusing the credential it was reached with."
+  @doc "Returns whether `answer` is the server refusing the credential."
   @spec refused?(term()) :: boolean()
   def refused?({:error, %Anubis.MCP.Error{data: %{original_reason: reason}}}),
     do: authorization_required?(reason)

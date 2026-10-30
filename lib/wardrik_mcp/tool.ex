@@ -34,7 +34,7 @@ defmodule WardrikMCP.Tool do
     )
   end
 
-  @doc "The one tool a server offers before anyone has reached it with their credential: connecting."
+  @doc "Returns the `connect` tool a server offers before anyone has connected with a credential."
   @spec connect(Server.t()) :: WardrikCore.Tool.t()
   def connect(%Server{} = server) do
     WardrikCore.Tool.new!(

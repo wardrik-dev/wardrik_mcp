@@ -20,14 +20,14 @@ defmodule WardrikMCP.Result do
   def answer({:error, reason}, _limit) when is_binary(reason), do: {:error, reason}
   def answer({:error, reason}, _limit), do: {:error, inspect(reason)}
 
-  @doc "Returns what went wrong, with what the server answered when it refused the request."
+  @doc "Returns the error's message, with the server's answer for an HTTP error."
   @spec message(Error.t()) :: String.t()
   def message(%Error{message: message, data: %{original_reason: {:http_error, status, body}}}),
     do: "#{message}: HTTP #{status}: #{said(body)}"
 
   def message(%Error{message: message}), do: message
 
-  @doc "Returns whether `error` may pass if the call is tried again, unlike a request the server refused."
+  @doc "Returns whether `error` is transient. A 4xx HTTP error isn't."
   @spec passing?(Error.t()) :: boolean()
   def passing?(%Error{data: %{original_reason: {:http_error, status, _body}}}),
     do: status not in 400..499

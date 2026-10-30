@@ -1,21 +1,21 @@
 # WardrikMCP
 
-The tools of any MCP server, for [WardrikCore](https://hexdocs.pm/wardrik_core) agents to call.
+Gives [WardrikCore](https://hexdocs.pm/wardrik_core) agents the tools of any MCP server.
 
 ## Install
 
 ```elixir
 def deps do
   [
-    {:wardrik_mcp, "~> 0.1"}
+    {:wardrik_mcp, "~> 0.1.0-rc.1"}
   ]
 end
 ```
 
 ## Connect to servers
 
-Add `WardrikMCP` to your supervision tree, with a name and the servers it reaches. A server runs as a command,
-or is reached over HTTP:
+Add `WardrikMCP` to your supervision tree with a name and its servers. A server runs as a local
+command (`:stdio`) or is reached over HTTP (`:streamable_http`):
 
 ```elixir
 children = [
@@ -40,14 +40,12 @@ children = [
 ]
 ```
 
-Every function takes the name you gave it, and raises saying so where it isn't started.
-
-Each server connects on its own. One that's down offers no tools, and holds up nothing else. It's
-tried again, waiting longer each time, up to a minute.
+Each server connects on its own. A server that's down offers no tools and doesn't block the
+others. It's retried with backoff, up to a minute between tries.
 
 ## Give an agent the tools
 
-A server's tools are a `WardrikCore.Capability`, named by the server:
+Pass `WardrikMCP` as a capability, with the servers to take tools from:
 
 ```elixir
 WardrikCore.start_agent(
@@ -57,29 +55,39 @@ WardrikCore.start_agent(
 )
 ```
 
-The model sees each tool as `github__search_issues`, with the server's own description and JSON
-Schema. When the server says its tools changed, the agent gets the new ones from its next turn.
+The model sees each tool as `<server>__<tool>`, as `github__search_issues`, with the server's own
+description and JSON Schema. When a server says its tools changed, the agent gets the new ones on
+its next turn.
 
-| Key | Takes | Unless set |
+## Server options
+
+| Option | Value | Default |
 | --- | --- | --- |
 | `transport` | `{:stdio, command: …, args: …, env: …}` or `{:streamable_http, base_url: …, headers: …}` | required |
-| `only` | the server's own tool names to offer | every tool |
-| `except` | the server's own tool names to leave out | none |
-| `timeout` | how long a call may take, in milliseconds | 60 seconds |
-| `max_result_bytes` | how much of a result the model gets | 128 KB |
-| `prefix` | what its tools are named under | its name |
-| `credential_name` | the name each principal's own credential for it is held under | none |
-| `cost` | what each call costs, as `[usd: 0.001]`, or a function of the server's result | nothing |
-| `gated` | which tools can change something, so a person must allow their calls: `true`, `false`, or the server's own tool names, as `["create_*"]` | those it doesn't mark read-only |
-| `trusted` | `true` where its answers are the deployment's own, so they aren't labelled `"outside"` | `false` |
+| `only` | the server's tool names to offer | every tool |
+| `except` | the server's tool names to leave out | none |
+| `timeout` | milliseconds a call may take | `60_000` |
+| `max_result_bytes` | bytes of a result the model gets | `131_072` |
+| `prefix` | the prefix for tool names | the server's name |
+| `credential_name` | the credential each principal reaches the server with | none |
+| `credential_header`, `credential_scheme` | where the credential goes over HTTP | `"authorization"`, `"Bearer"` |
+| `credential_env` | the environment variable the credential goes in, for a command | none |
+| `cost` | each call's cost, as `[usd: 0.001]`, or a function of the result | none |
+| `gated` | which tools need a person's approval: `true`, `false`, or tool names, as `["create_*"]` | tools not marked read-only |
+| `trusted` | `true` to not label answers `"outside"` | `false` |
 
-The model gets a result's structured content where the server sends some, and its text otherwise.
-A longer result is cut, and the model is told. A tool's error reaches the model as the call's error.
+See `WardrikMCP.Server`.
 
-## Add servers as the app runs
+## Results
 
-Add and remove servers while the app runs. Give `WardrikMCP` a `store:`, and every node reaches
-what any adds:
+The model gets a result's structured content if the server sends it, and its text otherwise. A
+result over `max_result_bytes` is cut, and the model is told. An error the tool returns reaches
+the model as the call's error.
+
+## Add servers at runtime
+
+Give `WardrikMCP` a `:store` to add and remove servers while the app runs. Every node sharing the
+store sees them.
 
 ```elixir
 {WardrikMCP, name: MyApp.MCP, store: store, servers: []}
@@ -88,18 +96,19 @@ WardrikMCP.add(MyApp.MCP, "linear", transport: {:streamable_http, base_url: "htt
 #=> :ok
 
 WardrikMCP.servers(MyApp.MCP)
-#=> ["github", "linear"]
+#=> ["linear"]
 
 WardrikMCP.remove(MyApp.MCP, "linear")
 #=> :ok
 ```
 
-A server added as the app runs takes its options as data. Each node reads the servers in the store
-again every minute, or when you call `reconcile/1`.
+Options for a server added at runtime must be data, not functions. Each node re-reads the store
+every minute, or when you call `WardrikMCP.reconcile/1`.
 
-Where others name the URLs, as the users of a hosted app do, give a `check:`. Each URL of a server
-added as the app runs is held to it as it's added and as each connection to it starts, and a
-command is never run:
+### Checking URLs
+
+When users supply the URLs, give a `:check`. It's called on each URL when the server is added and
+each time a connection starts. With a check, runtime servers must use HTTP; commands are refused.
 
 ```elixir
 {WardrikMCP, name: MyApp.MCP, store: store, check: &MyApp.Egress.public/1}
@@ -108,10 +117,10 @@ WardrikMCP.add(MyApp.MCP, "internal", transport: {:streamable_http, base_url: "h
 #=> {:error, "https://10.0.0.5/mcp can't be reached: 10.0.0.5 is a private address"}
 ```
 
-## Reach a server as each person
+## Per-person credentials
 
-Give a `credential_name`, and each principal reaches the server with their own credential of that
-name, from the agent's `WardrikCore.Credentials`, over a connection of their own:
+Set `credential_name` so each principal reaches the server with their own credential, over their
+own connection. The credential comes from the agent's `WardrikCore.Credentials`.
 
 ```elixir
 WardrikMCP.add(MyApp.MCP, "linear",
@@ -120,41 +129,41 @@ WardrikMCP.add(MyApp.MCP, "linear",
 )
 ```
 
-Over HTTP, it's sent as `authorization: Bearer <token>`; `credential_header` and
-`credential_scheme` change that. A command gets it in the variable `credential_env` names. A
-principal who holds none yet is asked to sign in, and the call waits on it. A credential that
-changes reconnects. One the server refuses, with a 401, is reported through
-`WardrikCore.Credentials.refused/2`, and the call is tried once more: an OAuth grant is renewed,
-or the person is asked to sign in again.
+* Over HTTP, it's sent as `authorization: Bearer <token>`. Change this with `credential_header`
+  and `credential_scheme`.
+* A command gets it in the environment variable named by `credential_env`.
+* A principal with no credential yet is asked to sign in, and the call waits.
+* A changed credential reconnects.
+* If the server refuses the credential (401 or 403), it's reported with
+  `WardrikCore.Credentials.refused/2` and the call is tried once more. An OAuth grant is renewed,
+  or the person is asked to sign in again.
 
-Until anyone has reached it, the server offers one tool, `linear__connect`, so an agent can begin.
-Once someone has, its tools are kept in the store and offered to everyone. A person's connection
-closes after five minutes without a call.
+Until someone has connected, the server offers one tool, `linear__connect`, so an agent can start.
+After that, its tools are kept in the store and offered to everyone. A person's connection closes
+after five minutes without a call.
 
-## What a server says about its tools
+## Tool annotations
 
-An MCP server marks its tools with hints. Each tool carries them as
+MCP servers mark their tools with hints. Each tool carries them as
 [annotations](https://hexdocs.pm/wardrik_core/WardrikCore.Tool.html):
 
-| The server's hint | The tool's annotation |
+| Server hint | Annotation |
 | --- | --- |
-| `readOnlyHint` | `read_only`, and `idempotent` too |
+| `readOnlyHint` | `read_only`, and `idempotent` |
 | `destructiveHint` | `destructive` |
 | `idempotentHint` | `idempotent` |
 | `openWorldHint` | `open_world` |
 
-A hint the server doesn't give isn't set. Anything that reads annotations can decide by them. With
-[WardrikPolicy](https://hexdocs.pm/wardrik_policy), a tool the server doesn't mark read-only can
-wait for a person:
+A hint the server doesn't give isn't set. With [WardrikPolicy](https://hexdocs.pm/wardrik_policy),
+you can make tools that aren't read-only wait for a person:
 
 ```elixir
 WardrikPolicy.new!(default: [destructive: :deny, read_only: :allow, else: :ask])
 ```
 
-## What a call cost
+## Call costs
 
-A server that charges for its calls can say so. Give it a fixed `cost`, or read it from the
-server's result:
+Give a server a fixed `cost`, or a function that reads it from the result:
 
 ```elixir
 search: [
@@ -163,12 +172,14 @@ search: [
 ]
 ```
 
-Each call's cost is measured on its step, so a budget counts it.
+Each call's cost is measured on its step, so budgets count it.
 
-## Events
+## Telemetry
 
-Each time the tools a server offers change, `WardrikMCP` emits `[:wardrik_mcp, :tools]`. It carries
-the `mcp` it runs under and the `server`, and measures the `count` of tools the server now offers, which is 0 while it's down.
+`[:wardrik_mcp, :tools]` is emitted each time a server's tools change.
+
+* Measurements: `:count`, the number of tools the server offers. `0` while it's down.
+* Metadata: `:mcp`, the `WardrikMCP` name, and `:server`, the server's name.
 
 ## License
 
