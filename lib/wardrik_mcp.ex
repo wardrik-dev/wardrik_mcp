@@ -15,7 +15,7 @@ defmodule WardrikMCP do
            linear: [
              transport:
                {:streamable_http,
-                base_url: "https://mcp.linear.app/mcp",
+                url: "https://mcp.linear.app/mcp",
                 headers: %{"authorization" => "Bearer " <> System.fetch_env!("LINEAR_TOKEN")}}
            ]
          ]}
@@ -117,7 +117,7 @@ defmodule WardrikMCP do
 
       :ok =
         WardrikMCP.add(MyApp.MCP, "linear",
-          transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
+          transport: {:streamable_http, url: "https://mcp.linear.app/mcp"},
           credential_name: "linear"
         )
   """

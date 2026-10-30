@@ -9,14 +9,15 @@ defmodule WardrikMCP.Server do
       ]
 
       linear: [
-        transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp", headers: %{}},
+        transport: {:streamable_http, url: "https://mcp.linear.app/mcp", headers: %{}},
         credential_name: "linear"
       ]
 
   ## Options
 
     * `:transport` - required. `{:stdio, command: ..., args: ..., env: ...}` or
-      `{:streamable_http, base_url: ..., headers: ...}`. A command gets its `env` and only these
+      `{:streamable_http, url: ..., headers: ...}`. The `url` is the server's endpoint, as it
+      publishes it, as `"https://mcp.linear.app/mcp"`. A command gets its `env` and only these
       of the app's own variables: `HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `SHELL`, `TERM`,
       `TMPDIR` and `USER`. It's started through `env`, which unsets the rest.
     * `:only` - the server's tool names to offer, as `["search_issues"]`. Every tool unless set.
@@ -103,9 +104,25 @@ defmodule WardrikMCP.Server do
 
     struct!(
       __MODULE__,
-      [name: to_string(name), transport: Keyword.fetch!(opts, :transport)] ++ opts
+      [name: to_string(name), transport: transport!(Keyword.fetch!(opts, :transport))] ++ opts
     )
   end
+
+  defp transport!({:streamable_http, opts}) do
+    opts = Keyword.validate!(opts, [:url, headers: %{}])
+
+    case URI.new(opts[:url] || "") do
+      {:ok, %URI{scheme: scheme, host: host}}
+      when scheme in ~w(http https) and host not in [nil, ""] ->
+        {:streamable_http, opts}
+
+      _invalid ->
+        raise ArgumentError,
+              "a server over HTTP needs an http or https :url, got: #{inspect(opts[:url])}"
+    end
+  end
+
+  defp transport!(transport), do: transport
 
   @doc """
   Returns `:ok` if the server may be reached now, or `{:error, reason}`.
@@ -119,7 +136,7 @@ defmodule WardrikMCP.Server do
     do: {:error, "a server added as the app runs is reached over HTTP"}
 
   def reachable(%__MODULE__{transport: {:streamable_http, opts}, check: check}) do
-    url = Keyword.fetch!(opts, :base_url)
+    url = Keyword.fetch!(opts, :url)
 
     case check.(url) do
       :ok -> :ok
@@ -151,7 +168,8 @@ defmodule WardrikMCP.Server do
   @doc "Returns the transport options for reaching the server with the caller's `token`."
   @spec transport(t(), String.t() | nil) :: {:stdio | :streamable_http, keyword()}
   def transport(%__MODULE__{transport: {:streamable_http, opts}} = server, token),
-    do: {:streamable_http, opts |> pooled(server.mcp) |> credentialed(server, token)}
+    do:
+      {:streamable_http, opts |> endpoint() |> pooled(server.mcp) |> credentialed(server, token)}
 
   def transport(%__MODULE__{transport: {:stdio, opts}, credential_env: env}, token)
       when is_binary(env) and is_binary(token),
@@ -160,6 +178,18 @@ defmodule WardrikMCP.Server do
          opts |> Keyword.update(:env, %{env => token}, &Map.put(&1, env, token)) |> isolated()}
 
   def transport(%__MODULE__{transport: {:stdio, opts}}, _token), do: {:stdio, isolated(opts)}
+
+  # Anubis joins base_url and mcp_path, so the URL splits into them to be reached as given.
+  defp endpoint(opts) do
+    {url, opts} = Keyword.pop!(opts, :url)
+    uri = URI.new!(url)
+    path = if uri.path in [nil, ""], do: "/", else: uri.path
+
+    Keyword.merge(opts,
+      base_url: URI.to_string(%{uri | path: nil, fragment: nil}),
+      mcp_path: path
+    )
+  end
 
   defp pooled(opts, nil), do: opts
   defp pooled(opts, mcp), do: Keyword.put_new(opts, :finch_name, WardrikMCP.Connection.finch(mcp))

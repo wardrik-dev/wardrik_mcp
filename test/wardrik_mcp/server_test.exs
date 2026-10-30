@@ -4,7 +4,7 @@ defmodule WardrikMCP.ServerTest do
   alias WardrikMCP.Server
 
   test "sends a credential in a header over HTTP, as its scheme says" do
-    http = {:streamable_http, base_url: "https://mcp.test/mcp", headers: %{"x-app" => "1"}}
+    http = {:streamable_http, url: "https://mcp.test/mcp", headers: %{"x-app" => "1"}}
 
     assert {:streamable_http, opts} =
              Server.transport(Server.new!("a", transport: http, credential_name: "a"), "tok")
@@ -13,7 +13,7 @@ defmodule WardrikMCP.ServerTest do
 
     server =
       Server.new!("a",
-        transport: {:streamable_http, base_url: "https://mcp.test/mcp"},
+        transport: {:streamable_http, url: "https://mcp.test/mcp"},
         credential_name: "a",
         credential_header: "x-key",
         credential_scheme: ""
@@ -25,7 +25,7 @@ defmodule WardrikMCP.ServerTest do
 
   test "reaches a server over HTTP through its WardrikMCP's own pool" do
     server = %{
-      Server.new!("a", transport: {:streamable_http, base_url: "https://mcp.test/mcp"})
+      Server.new!("a", transport: {:streamable_http, url: "https://mcp.test/mcp"})
       | mcp: MyApp.MCP
     }
 

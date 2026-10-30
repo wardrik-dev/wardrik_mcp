@@ -2,6 +2,7 @@
 
 ## 0.1.0 (unreleased)
 
+- A server over HTTP takes the endpoint it publishes as `url`, and is reached at exactly that URL.
 - Tools are `gated` unless read-only, or as a server's `gated` says, and their answers are labelled
   `"outside"` unless the server is `trusted`.
 - A call that fails in passing raises `WardrikMCP.Unavailable`, for the tool runner to try again.

@@ -240,6 +240,32 @@ defmodule WardrikMCPTest do
     end
   end
 
+  test "reaches a server over HTTP at exactly the URL it's given" do
+    listen()
+
+    for {name, path} <- [{"ending", "/mcp"}, {"nested", "/v1/tools/"}, {"root", "/"}] do
+      port = WardrikMCP.HTTPStub.start(self(), path)
+      url = "http://127.0.0.1:#{port}" <> if(path == "/", do: "", else: path)
+
+      :ok = WardrikMCP.add(@mcp, name, transport: {:streamable_http, url: url})
+      on_exit(fn -> WardrikMCP.remove(@mcp, name) end)
+      connected(name)
+
+      assert ["#{name}__ping"] == name |> tools() |> Enum.map(& &1.name)
+      assert [^path | _rest] = paths = requested()
+      assert Enum.uniq(paths) == [path]
+    end
+  end
+
+  test "refuses a server over HTTP without an http or https URL" do
+    for transport <- [
+          {:streamable_http, base_url: "https://mcp.example.com/mcp"},
+          {:streamable_http, url: "mcp.example.com/mcp"}
+        ] do
+      assert {:error, _reason} = WardrikMCP.add(@mcp, "bad", transport: transport)
+    end
+  end
+
   describe "servers added under a check" do
     setup do
       test = self()
@@ -259,7 +285,7 @@ defmodule WardrikMCPTest do
 
       assert :ok =
                WardrikMCP.add(WardrikMCPTest.Checked, "remote",
-                 transport: {:streamable_http, base_url: url}
+                 transport: {:streamable_http, url: url}
                )
 
       assert_receive {:checked, ^url}
@@ -267,7 +293,7 @@ defmodule WardrikMCPTest do
 
       assert {:error, "https://mcp.example.com/mcp can't be reached: it's private"} =
                WardrikMCP.add(WardrikMCPTest.Checked, "again",
-                 transport: {:streamable_http, base_url: url}
+                 transport: {:streamable_http, url: url}
                )
     end
 
@@ -398,6 +424,14 @@ defmodule WardrikMCPTest do
 
       assert :ok = WardrikMCP.remove(@mcp, "own")
       assert own(ada) == []
+    end
+  end
+
+  defp requested do
+    receive do
+      {:http, _method, path} -> [path | requested()]
+    after
+      0 -> []
     end
   end
 

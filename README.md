@@ -33,7 +33,7 @@ children = [
      linear: [
        transport:
          {:streamable_http,
-          base_url: "https://mcp.linear.app/mcp",
+          url: "https://mcp.linear.app/mcp",
           headers: %{"authorization" => "Bearer " <> System.fetch_env!("LINEAR_TOKEN")}}
      ]
    ]}
@@ -67,7 +67,7 @@ its next turn.
 
 | Option | Value | Default |
 | --- | --- | --- |
-| `transport` | `{:stdio, command: …, args: …, env: …}` or `{:streamable_http, base_url: …, headers: …}` | required |
+| `transport` | `{:stdio, command: …, args: …, env: …}` or `{:streamable_http, url: …, headers: …}`, where `url` is the endpoint the server publishes | required |
 | `only` | the server's tool names to offer | every tool |
 | `except` | the server's tool names to leave out | none |
 | `timeout` | milliseconds a call may take | `60_000` |
@@ -96,7 +96,7 @@ store sees them.
 ```elixir
 {WardrikMCP, name: MyApp.MCP, store: store, servers: []}
 
-WardrikMCP.add(MyApp.MCP, "linear", transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"})
+WardrikMCP.add(MyApp.MCP, "linear", transport: {:streamable_http, url: "https://mcp.linear.app/mcp"})
 #=> :ok
 
 WardrikMCP.servers(MyApp.MCP)
@@ -117,7 +117,7 @@ each time a connection starts. With a check, runtime servers must use HTTP; comm
 ```elixir
 {WardrikMCP, name: MyApp.MCP, store: store, check: &MyApp.Egress.public/1}
 
-WardrikMCP.add(MyApp.MCP, "internal", transport: {:streamable_http, base_url: "https://10.0.0.5/mcp"})
+WardrikMCP.add(MyApp.MCP, "internal", transport: {:streamable_http, url: "https://10.0.0.5/mcp"})
 #=> {:error, "https://10.0.0.5/mcp can't be reached: 10.0.0.5 is a private address"}
 ```
 
@@ -128,7 +128,7 @@ own connection. The credential comes from the agent's `WardrikCore.Credentials`.
 
 ```elixir
 WardrikMCP.add(MyApp.MCP, "linear",
-  transport: {:streamable_http, base_url: "https://mcp.linear.app/mcp"},
+  transport: {:streamable_http, url: "https://mcp.linear.app/mcp"},
   credential_name: "linear"
 )
 ```
@@ -171,7 +171,7 @@ Give a server a fixed `cost`, or a function that reads it from the result:
 
 ```elixir
 search: [
-  transport: {:streamable_http, base_url: "https://search.example.com/mcp"},
+  transport: {:streamable_http, url: "https://search.example.com/mcp"},
   cost: fn result -> %{usd: result["_meta"]["usd"]} end
 ]
 ```
