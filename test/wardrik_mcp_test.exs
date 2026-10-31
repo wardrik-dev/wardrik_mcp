@@ -34,6 +34,7 @@ defmodule WardrikMCPTest do
   alias WardrikCore.Context
   alias WardrikCore.Tool
   alias WardrikCore.ToolCall
+  alias WardrikMCP.Server
 
   @mcp WardrikMCPTest.MCP
   @stub {:stdio, command: "elixir", args: [Path.expand("support/stub_server.exs", __DIR__)]}
@@ -260,6 +261,71 @@ defmodule WardrikMCPTest do
   test "refuses a server over HTTP without an http or https URL" do
     transport = {:streamable_http, url: "mcp.example.com/mcp"}
     assert {:error, _reason} = WardrikMCP.add(@mcp, "bad", transport: transport)
+  end
+
+  describe "a server whose headers name secrets" do
+    setup do
+      test = self()
+      {:ok, secrets} = Agent.start_link(fn -> %{{"acme", "KEY"} => "one"} end)
+
+      secret = fn owner, name ->
+        send(test, {:read, owner, name})
+
+        case Agent.get(secrets, &Map.fetch(&1, {owner, name})) do
+          {:ok, value} -> {:ok, value}
+          :error -> {:error, :not_found}
+        end
+      end
+
+      start_supervised!({WardrikMCP, name: WardrikMCPTest.Secrets, secret: secret}, id: :secrets)
+      port = WardrikMCP.HTTPStub.start(test, "/mcp")
+      %{secrets: secrets, url: "http://127.0.0.1:#{port}/mcp"}
+    end
+
+    defp secured(url, owner, value),
+      do: [
+        transport: {:streamable_http, url: url, headers: %{"authorization" => value}},
+        owner: owner
+      ]
+
+    test "reads them for its owner as it connects, and again once reconnected", %{
+      secrets: secrets,
+      url: url
+    } do
+      server = secured(url, "acme", ["Bearer ", {:secret, "KEY"}])
+      assert :ok = WardrikMCP.add(WardrikMCPTest.Secrets, "crm", server)
+
+      assert_receive {:read, "acme", "KEY"}
+      assert_receive {:authorization, "Bearer one"}, 5_000
+
+      Agent.update(secrets, &Map.put(&1, {"acme", "KEY"}, "two"))
+      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, "globex", "KEY")
+      refute_receive {:read, _owner, _name}, 200
+
+      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, "acme", "KEY")
+      assert_receive {:authorization, "Bearer two"}, 5_000
+    end
+
+    test "is down while one can't be read, and says why", %{url: url} do
+      theirs = secured(url, "globex", {:secret, "KEY"})
+      server = Server.new!("theirs", theirs)
+
+      assert Server.resolved(server) ==
+               {:error, "the secret KEY can't be read: WardrikMCP was given no :secret"}
+
+      assert Server.resolved(%{server | secret: fn _owner, _name -> {:error, :not_found} end}) ==
+               {:error, "the secret KEY can't be read: :not_found"}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          :ok = WardrikMCP.add(WardrikMCPTest.Secrets, "theirs", theirs)
+          assert_receive {:read, "globex", "KEY"}
+          :ok = WardrikMCP.remove(WardrikMCPTest.Secrets, "theirs")
+        end)
+
+      assert log =~ "The MCP server theirs is down: \"the secret KEY can't be read: :not_found\""
+      assert WardrikMCP.tools(context(), name: WardrikMCPTest.Secrets, servers: "theirs") == []
+    end
   end
 
   describe "servers added under a check" do

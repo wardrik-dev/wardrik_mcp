@@ -228,7 +228,8 @@ defmodule WardrikMCP.Connection do
 
   defp connect(state) do
     with :ok <- Server.reachable(state.server),
-         {:ok, client} <- start_client(state) do
+         {:ok, server} <- Server.resolved(state.server),
+         {:ok, client} <- start_client(state, server) do
       refresh(%{state | client: client})
     else
       {:error, reason} -> failed(state, reason)
@@ -245,7 +246,8 @@ defmodule WardrikMCP.Connection do
   defp failed(%{who: nil} = state, reason), do: retry_later(state, reason)
   defp failed(state, reason), do: %{state | failure: reason}
 
-  defp start_client(%{server: server, who: who, token: token, slot: slot}) do
+  # The server comes with its secrets read, which are never kept in the state.
+  defp start_client(%{who: who, token: token, slot: slot}, server) do
     Anubis.Client.start_link(
       name: client(server, who),
       transport_name: {:via, Registry, {registry(server.mcp), {:transport, server.name, who}}},
