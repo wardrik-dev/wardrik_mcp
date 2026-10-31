@@ -1,4 +1,91 @@
 defmodule WardrikMCP.Server do
+  @inherited ~w(HOME LANG LC_ALL LOGNAME PATH SHELL TERM TMPDIR USER)
+
+  @http NimbleOptions.new!(
+          url: [type: :string, required: true],
+          headers: [type: {:map, :string, :any}, default: %{}]
+        )
+
+  @stdio NimbleOptions.new!(
+           command: [type: :string, required: true],
+           args: [type: {:list, :string}, default: []],
+           env: [type: {:map, :string, :string}, default: %{}]
+         )
+
+  @schema NimbleOptions.new!(
+            transport: [
+              type: {:custom, __MODULE__, :transport, []},
+              required: true,
+              doc: """
+              `{:stdio, command: ..., args: ..., env: ...}` or
+              `{:streamable_http, url: ..., headers: ...}`. The `url` is the server's endpoint, as
+              it publishes it, as `"https://mcp.linear.app/mcp"`. A command gets its `env` and only
+              these of the app's own variables: #{Enum.map_join(@inherited, ", ", &"`#{&1}`")}.
+              It's started through `env`, which unsets the rest.
+              """
+            ],
+            only: [
+              type: {:list, :string},
+              doc:
+                "The server's tool names to offer, as `[\"search_issues\"]`. Every tool unless set."
+            ],
+            except: [type: {:list, :string}, doc: "The server's tool names to leave out."],
+            prefix: [
+              type: :string,
+              doc: """
+              The prefix for tool names, as `"linear"` for `linear__search_issues`. The server's
+              name unless set.
+              """
+            ],
+            credential_name: [
+              type: :string,
+              doc: """
+              The credential each principal reaches the server with. See
+              `WardrikCore.Credentials`.
+              """
+            ],
+            credential_header: [
+              type: :string,
+              default: "authorization",
+              doc: "The HTTP header the credential goes in."
+            ],
+            credential_scheme: [
+              type: :string,
+              default: "Bearer",
+              doc: "The scheme before the credential."
+            ],
+            credential_env: [
+              type: :string,
+              doc: "The environment variable the credential goes in, for a command."
+            ],
+            timeout: [
+              type: :pos_integer,
+              default: :timer.seconds(60),
+              doc: "Milliseconds a call may take."
+            ],
+            max_result_bytes: [
+              type: :pos_integer,
+              default: 128 * 1024,
+              doc: "Bytes of a result the model gets."
+            ],
+            cost: [
+              type: {:or, [:keyword_list, {:fun, 1}]},
+              doc: "Each call's cost, as `[usd: 0.001]`, or a function of the server's result."
+            ],
+            gated: [
+              type: {:or, [:boolean, {:list, :string}]},
+              doc: """
+              Which tools need a person's approval: `true`, `false`, or tool name globs, as
+              `["create_*"]`. Tools not marked read-only unless set.
+              """
+            ],
+            trusted: [
+              type: :boolean,
+              default: false,
+              doc: "`true` treats answers as the deployment's own, not labelled `\"outside\"`."
+            ]
+          )
+
   @moduledoc """
   An MCP server and how to reach it.
 
@@ -15,27 +102,7 @@ defmodule WardrikMCP.Server do
 
   ## Options
 
-    * `:transport` - required. `{:stdio, command: ..., args: ..., env: ...}` or
-      `{:streamable_http, url: ..., headers: ...}`. The `url` is the server's endpoint, as it
-      publishes it, as `"https://mcp.linear.app/mcp"`. A command gets its `env` and only these
-      of the app's own variables: `HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `SHELL`, `TERM`,
-      `TMPDIR` and `USER`. It's started through `env`, which unsets the rest.
-    * `:only` - the server's tool names to offer, as `["search_issues"]`. Every tool unless set.
-    * `:except` - the server's tool names to leave out.
-    * `:prefix` - the prefix for tool names, as `"linear"` for `linear__search_issues`. The
-      server's name unless set.
-    * `:credential_name` - the credential each principal reaches the server with. See
-      `WardrikCore.Credentials`.
-    * `:credential_header` - the HTTP header the credential goes in. `"authorization"` unless set.
-    * `:credential_scheme` - the scheme before the credential. `"Bearer"` unless set.
-    * `:credential_env` - the environment variable the credential goes in, for a command.
-    * `:timeout` - milliseconds a call may take. `60_000` unless set.
-    * `:max_result_bytes` - bytes of a result the model gets. `131_072` unless set.
-    * `:cost` - each call's cost, as `[usd: 0.001]`, or a function of the server's result.
-    * `:gated` - which tools need a person's approval: `true`, `false`, or tool name globs, as
-      `["create_*"]`. Tools not marked read-only unless set.
-    * `:trusted` - `true` to treat answers as the deployment's own, not labelled `"outside"`.
-      `false` unless set.
+  #{NimbleOptions.docs(@schema)}
   """
 
   @enforce_keys [:name, :transport]
@@ -79,50 +146,38 @@ defmodule WardrikMCP.Server do
           max_result_bytes: pos_integer()
         }
 
-  @options [
-    :transport,
-    :only,
-    :except,
-    :prefix,
-    :credential_name,
-    :credential_env,
-    :cost,
-    :gated,
-    trusted: false,
-    credential_header: "authorization",
-    credential_scheme: "Bearer",
-    timeout: :timer.seconds(60),
-    max_result_bytes: 128 * 1024
-  ]
-
-  @inherited ~w(HOME LANG LC_ALL LOGNAME PATH SHELL TERM TMPDIR USER)
-
-  @doc "Builds a server named `name`. Raises `ArgumentError` on an unknown option."
+  @doc "Builds a server named `name`. Raises `NimbleOptions.ValidationError` on invalid options."
   @spec new!(atom() | String.t(), keyword()) :: t()
-  def new!(name, opts) do
-    opts = Keyword.validate!(opts, @options)
+  def new!(name, opts),
+    do: struct!(__MODULE__, [name: to_string(name)] ++ NimbleOptions.validate!(opts, @schema))
 
-    struct!(
-      __MODULE__,
-      [name: to_string(name), transport: transport!(Keyword.fetch!(opts, :transport))] ++ opts
-    )
-  end
+  @doc false
+  def transport({:streamable_http, opts}) do
+    with {:ok, opts} <- options(opts, @http) do
+      case URI.new(opts[:url]) do
+        {:ok, %URI{scheme: scheme, host: host}}
+        when scheme in ~w(http https) and host not in [nil, ""] ->
+          {:ok, {:streamable_http, opts}}
 
-  defp transport!({:streamable_http, opts}) do
-    opts = Keyword.validate!(opts, [:url, headers: %{}])
-
-    case URI.new(opts[:url] || "") do
-      {:ok, %URI{scheme: scheme, host: host}}
-      when scheme in ~w(http https) and host not in [nil, ""] ->
-        {:streamable_http, opts}
-
-      _invalid ->
-        raise ArgumentError,
-              "a server over HTTP needs an http or https :url, got: #{inspect(opts[:url])}"
+        _invalid ->
+          {:error, "a server over HTTP needs an http or https :url, got: #{inspect(opts[:url])}"}
+      end
     end
   end
 
-  defp transport!(transport), do: transport
+  def transport({:stdio, opts}) do
+    with {:ok, opts} <- options(opts, @stdio), do: {:ok, {:stdio, opts}}
+  end
+
+  def transport(other),
+    do: {:error, "expected {:stdio, opts} or {:streamable_http, opts}, got: #{inspect(other)}"}
+
+  defp options(opts, schema) do
+    case NimbleOptions.validate(opts, schema) do
+      {:ok, opts} -> {:ok, opts}
+      {:error, %NimbleOptions.ValidationError{message: message}} -> {:error, message}
+    end
+  end
 
   @doc """
   Returns `:ok` if the server may be reached now, or `{:error, reason}`.

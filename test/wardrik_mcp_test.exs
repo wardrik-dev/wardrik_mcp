@@ -212,7 +212,7 @@ defmodule WardrikMCPTest do
       assert {:error, "stub is a server already"} = WardrikMCP.add(@mcp, "stub", transport: @stub)
       assert {:error, "stub is a server the app starts with"} = WardrikMCP.remove(@mcp, "stub")
 
-      assert {:error, "unknown keys" <> _} =
+      assert {:error, "unknown options [:colour]" <> _} =
                WardrikMCP.add(@mcp, "odd", transport: @stub, colour: "blue")
 
       assert {:error, "a server added as the app runs takes its options as data"} =

@@ -42,7 +42,7 @@ defmodule WardrikMCP.ServerTest do
     assert opts[:env] == %{"TOKEN" => "tok"}
 
     assert {:stdio, opts} = Server.transport(Server.new!("a", transport: stdio), "tok")
-    assert opts[:env] == nil
+    assert opts[:env] == %{}
   end
 
   test "starts a command through env, unsetting what it isn't given" do
@@ -68,5 +68,13 @@ defmodule WardrikMCP.ServerTest do
 
     assert Server.prefix(Server.new!("gh", transport: {:stdio, command: "x"}, prefix: "github")) ==
              "github"
+  end
+
+  test "refuses a transport it can't start" do
+    for transport <- [{:stdio, args: ["stdio"]}, {:stdio, command: "x", cwd: "/"}, {:ssh, []}] do
+      assert_raise NimbleOptions.ValidationError, ~r/:transport/, fn ->
+        Server.new!("a", transport: transport)
+      end
+    end
   end
 end
