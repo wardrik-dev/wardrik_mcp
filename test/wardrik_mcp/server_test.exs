@@ -77,4 +77,30 @@ defmodule WardrikMCP.ServerTest do
       end
     end
   end
+
+  test "reads the secrets its headers name, and knows which they are" do
+    headers = %{"authorization" => ["Bearer ", {:secret, "KEY"}], "x-team" => {:secret, "TEAM"}}
+
+    server = %{
+      Server.new!("a",
+        transport: {:streamable_http, url: "https://mcp.test/mcp", headers: headers}
+      )
+      | secret: fn "acme", name -> {:ok, String.downcase(name)} end,
+        owner: "acme"
+    }
+
+    assert {:ok, %Server{transport: {:streamable_http, opts}}} = Server.resolved(server)
+    assert opts[:headers] == %{"authorization" => "Bearer key", "x-team" => "team"}
+
+    assert Server.names?(server, "KEY")
+    assert Server.names?(server, "TEAM")
+    refute Server.names?(server, "OTHER")
+    refute Server.names?(Server.new!("b", transport: {:stdio, command: "x"}), "KEY")
+
+    assert_raise NimbleOptions.ValidationError, ~r/:headers/, fn ->
+      Server.new!("c",
+        transport: {:streamable_http, url: "https://mcp.test/mcp", headers: %{"x" => {:env, "X"}}}
+      )
+    end
+  end
 end

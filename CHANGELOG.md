@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- A header's value can name a secret, as `{:secret, name}` or `["Bearer ", {:secret, name}]`,
+  read with the new `:secret` option for the server's `owner` each time it connects. A server
+  whose secret can't be read is down, like one that can't be reached.
+- `reconnect/3` connects again the servers whose headers name a secret, once it changes.
+- `start_link/1` validates its options with NimbleOptions, documented from the schema.
+
 ## 0.1.0-rc.1 (2026-10-30)
 
 - `WardrikMCP`, which connects to MCP servers over stdio or Streamable HTTP, and gives an agent

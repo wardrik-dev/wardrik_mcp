@@ -40,6 +40,27 @@ defmodule WardrikMCP do
   others. It's retried with backoff, up to a minute between tries. When a server says its tools
   changed, they're listed again.
 
+  ## Secrets
+
+  A header can name a secret instead of holding it. `:secret` reads it each time the server
+  connects, for the server's `owner`:
+
+      {WardrikMCP,
+       name: MyApp.MCP,
+       secret: &MyApp.Vault.fetch/2,
+       servers: [
+         crm: [
+           transport:
+             {:streamable_http,
+              url: "https://mcp.crm.example/mcp",
+              headers: %{"authorization" => ["Bearer ", {:secret, "CRM_KEY"}]}},
+           owner: "acme"
+         ]
+       ]}
+
+  A server whose secret can't be read is down, and tried again like any other. After a secret
+  changes, `reconnect/3` connects its servers again.
+
   ## Annotations
 
   Each tool carries the server's hints as `WardrikCore.Tool` annotations: `read_only`,
@@ -67,6 +88,46 @@ defmodule WardrikMCP do
   @behaviour WardrikCore.Capability
   use Supervisor
 
+  @options NimbleOptions.new!(
+             name: [
+               type: :atom,
+               required: true,
+               doc: "The name agents and functions reach it by."
+             ],
+             servers: [
+               type: {:list, {:tuple, [{:or, [:atom, :string]}, :keyword_list]}},
+               default: [],
+               doc:
+                 "Servers to start with, as a list of name and options. See `WardrikMCP.Server`."
+             ],
+             store: [
+               type: :any,
+               doc:
+                 "A `WardrikStore` for servers added at runtime. Without it, `add/3` only adds a server on this node."
+             ],
+             reconcile: [
+               type: {:or, [:pos_integer, {:in, [:infinity]}]},
+               default: :timer.minutes(1),
+               doc: "Milliseconds between re-reads of the store, or `:infinity`."
+             ],
+             check: [
+               type: {:or, [{:fun, 1}, nil]},
+               doc: """
+               A function called on each URL of a server added at runtime. It returns `:ok` or
+               `{:error, reason}`. It's called when the server is added and each time a connection
+               starts. With a check, runtime servers must use HTTP; commands are refused. Use one
+               when users supply the URLs.
+               """
+             ],
+             secret: [
+               type: {:or, [{:fun, 2}, nil]},
+               doc: """
+               A function that reads the secret a header names, given the server's `owner` and the
+               secret's name. It returns `{:ok, value}` or `{:error, reason}`. See "Secrets".
+               """
+             ]
+           )
+
   alias WardrikMCP.Connection
   alias WardrikMCP.Servers
 
@@ -82,31 +143,12 @@ defmodule WardrikMCP do
 
   ## Options
 
-    * `:name` - required. The name agents and functions reach it by.
-    * `:servers` - servers to start with, as a keyword list of name and options. See
-      `WardrikMCP.Server`. `[]` unless set.
-    * `:store` - a `WardrikStore` for servers added at runtime. Without it, `add/3` only adds a
-      server on this node.
-    * `:reconcile` - milliseconds between re-reads of the store, or `:infinity`. `60_000` unless
-      set.
-    * `:check` - a function called on each URL of a server added at runtime. It returns `:ok` or
-      `{:error, reason}`. It's called when the server is added and each time a connection starts.
-      With a check, runtime servers must use HTTP; commands are refused. Use one when users supply
-      the URLs.
+  #{NimbleOptions.docs(@options)}
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
-    opts =
-      Keyword.validate!(opts, [
-        :name,
-        servers: [],
-        store: nil,
-        reconcile: :timer.minutes(1),
-        check: nil
-      ])
-
-    name = Keyword.fetch!(opts, :name)
-    Supervisor.start_link(__MODULE__, Map.new(opts), name: name)
+    opts = NimbleOptions.validate!(opts, @options)
+    Supervisor.start_link(__MODULE__, Map.new(opts), name: opts[:name])
   end
 
   @doc """
@@ -133,6 +175,15 @@ defmodule WardrikMCP do
   @spec remove(atom(), String.t()) :: :ok | {:error, :not_found | String.t()}
   def remove(mcp, name), do: Servers.remove(mcp, name)
 
+  @doc """
+  Connects again each server of `owner` whose headers name the secret `name`, so they read its new
+  value. Call it after the secret changes.
+
+      :ok = WardrikMCP.reconnect(MyApp.MCP, "acme", "CRM_KEY")
+  """
+  @spec reconnect(atom(), String.t() | nil, String.t()) :: :ok
+  def reconnect(mcp, owner, name), do: Servers.reconnect(mcp, owner, name)
+
   @doc "Returns the names of all servers, sorted."
   @spec servers(atom()) :: [String.t()]
   def servers(mcp), do: mcp |> Servers.all() |> Map.keys() |> Enum.sort()
@@ -146,9 +197,10 @@ defmodule WardrikMCP do
     settings = %{
       mcp: opts.name,
       servers: opts.servers,
-      store: scoped(opts.store),
+      store: scoped(opts[:store]),
       reconcile: opts.reconcile,
-      check: opts.check
+      check: opts[:check],
+      secret: opts[:secret]
     }
 
     children = [
