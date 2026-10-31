@@ -153,7 +153,7 @@ defmodule WardrikMCP.Servers do
       do: {:error, "a server added as the app runs takes its options as data"},
       else: {:ok, added(settings, name, opts)}
   rescue
-    error in ArgumentError -> {:error, Exception.message(error)}
+    error in NimbleOptions.ValidationError -> {:error, Exception.message(error)}
   end
 
   defp added(settings, name, opts), do: %{Server.new!(name, opts) | check: settings.check}

@@ -64,6 +64,7 @@ defmodule WardrikMCP.MixProject do
       sibling(:wardrik_store),
       # 2.2 speaks MCP 2026-07-28 without sending Mcp-Param-* headers (anubis-mcp#332).
       {:anubis_mcp, "~> 2.1.0"},
+      {:nimble_options, "~> 1.1"},
       {:telemetry, "~> 1.0"},
       {:mimic, "~> 2.4", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
