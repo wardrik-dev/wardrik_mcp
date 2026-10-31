@@ -7,6 +7,7 @@ defmodule WardrikMCP.Servers do
 
   Servers added at runtime are kept in the store. Each node re-reads the store on the
   `:reconcile` interval. If a `:check` is given, it's called when a server is added and each time a
+  connection starts. The secrets a server's headers name are read with `:secret` as each
   connection starts.
   """
 
@@ -45,6 +46,10 @@ defmodule WardrikMCP.Servers do
   @doc "Stores the tools listed by a server reached with a credential."
   @spec listed(atom(), String.t(), [map()]) :: :ok
   def listed(mcp, name, definitions), do: GenServer.call(name(mcp), {:listed, name, definitions})
+
+  @doc "Reconnects each server of `owner` whose headers name the secret `name`."
+  @spec reconnect(atom(), String.t() | nil, String.t()) :: :ok
+  def reconnect(mcp, owner, name), do: GenServer.call(name(mcp), {:reconnect, owner, name})
 
   @doc "Re-reads the servers in the store now."
   @spec reconcile(atom()) :: :ok
@@ -96,6 +101,15 @@ defmodule WardrikMCP.Servers do
   end
 
   def handle_call(:reconcile, _from, state), do: {:reply, :ok, reconciled(state)}
+
+  def handle_call({:reconnect, owner, secret}, _from, %{settings: settings} = state) do
+    for {name, %Server{owner: ^owner} = server} <- state.servers, Server.names?(server, secret) do
+      :ok = Connection.close(settings.mcp, name)
+      if server.credential_name == nil, do: connect(settings.mcp, server)
+    end
+
+    {:reply, :ok, state}
+  end
 
   def handle_call({:listed, name, definitions}, _from, %{settings: settings} = state) do
     if settings.store,
@@ -178,7 +192,7 @@ defmodule WardrikMCP.Servers do
   end
 
   defp started(%{settings: settings} = state, server) do
-    server = %{server | mcp: settings.mcp}
+    server = %{server | mcp: settings.mcp, secret: settings.secret}
 
     if server.credential_name == nil, do: connect(settings.mcp, server)
     true = :ets.insert(name(settings.mcp), {{:server, server.name}, server})

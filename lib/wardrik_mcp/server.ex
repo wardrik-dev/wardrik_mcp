@@ -1,9 +1,14 @@
 defmodule WardrikMCP.Server do
   @inherited ~w(HOME LANG LC_ALL LOGNAME PATH SHELL TERM TMPDIR USER)
 
+  @secret {:tuple, [{:in, [:secret]}, :string]}
+
   @http NimbleOptions.new!(
           url: [type: :string, required: true],
-          headers: [type: {:map, :string, :any}, default: %{}]
+          headers: [
+            type: {:map, :string, {:or, [:string, @secret, {:list, {:or, [:string, @secret]}}]}},
+            default: %{}
+          ]
         )
 
   @stdio NimbleOptions.new!(
@@ -22,7 +27,15 @@ defmodule WardrikMCP.Server do
               it publishes it, as `"https://mcp.linear.app/mcp"`. A command gets its `env` and only
               these of the app's own variables: #{Enum.map_join(@inherited, ", ", &"`#{&1}`")}.
               It's started through `env`, which unsets the rest.
+
+              A header's value is a string, `{:secret, name}`, or a list of both, as
+              `["Bearer ", {:secret, "LINEAR_TOKEN"}]`. A secret is read with `WardrikMCP`'s
+              `:secret` each time the server connects.
               """
+            ],
+            owner: [
+              type: :string,
+              doc: "Whose secrets its headers name. `WardrikMCP`'s `:secret` is given it."
             ],
             only: [
               type: {:list, :string},
@@ -112,12 +125,14 @@ defmodule WardrikMCP.Server do
     :only,
     :except,
     :prefix,
+    :owner,
     :credential_name,
     :credential_env,
     :cost,
     :mcp,
     :gated,
     :check,
+    :secret,
     trusted: false,
     credential_header: "authorization",
     credential_scheme: "Bearer",
@@ -133,6 +148,7 @@ defmodule WardrikMCP.Server do
           only: [String.t()] | nil,
           except: [String.t()] | nil,
           prefix: String.t() | nil,
+          owner: String.t() | nil,
           credential_name: String.t() | nil,
           credential_env: String.t() | nil,
           credential_header: String.t(),
@@ -141,6 +157,7 @@ defmodule WardrikMCP.Server do
           mcp: atom() | nil,
           gated: boolean() | [String.t()] | nil,
           check: (String.t() -> :ok | {:error, String.t()}) | nil,
+          secret: (String.t() | nil, String.t() -> {:ok, String.t()} | {:error, term()}) | nil,
           trusted: boolean(),
           timeout: pos_integer(),
           max_result_bytes: pos_integer()
@@ -196,6 +213,54 @@ defmodule WardrikMCP.Server do
     case check.(url) do
       :ok -> :ok
       {:error, why} -> {:error, "#{url} can't be reached: #{why}"}
+    end
+  end
+
+  @doc """
+  Returns the server with each secret its headers name read, or `{:error, reason}` for the first
+  that can't be.
+  """
+  @spec resolved(t()) :: {:ok, t()} | {:error, String.t()}
+  def resolved(%__MODULE__{transport: {:streamable_http, opts}} = server) do
+    headers = opts[:headers]
+
+    named =
+      for {_header, value} <- headers, {:secret, name} <- List.wrap(value), uniq: true, do: name
+
+    with {:ok, secrets} <- read(server, named) do
+      headers =
+        Map.new(headers, fn {header, value} ->
+          {header, Enum.map_join(List.wrap(value), &Map.get(secrets, &1, &1))}
+        end)
+
+      {:ok, %{server | transport: {:streamable_http, Keyword.put(opts, :headers, headers)}}}
+    end
+  end
+
+  def resolved(server), do: {:ok, server}
+
+  @doc "Returns whether the server's headers name the secret `name`."
+  @spec names?(t(), String.t()) :: boolean()
+  def names?(%__MODULE__{transport: {:streamable_http, opts}}, name),
+    do: Enum.any?(opts[:headers], fn {_header, value} -> {:secret, name} in List.wrap(value) end)
+
+  def names?(_server, _name), do: false
+
+  defp read(server, names) do
+    Enum.reduce_while(names, {:ok, %{}}, fn name, {:ok, read} ->
+      case secret(server, name) do
+        {:ok, value} -> {:cont, {:ok, Map.put(read, {:secret, name}, value)}}
+        {:error, reason} -> {:halt, {:error, "the secret #{name} can't be read: #{reason}"}}
+      end
+    end)
+  end
+
+  defp secret(%__MODULE__{secret: nil}, _name), do: {:error, "WardrikMCP was given no :secret"}
+
+  defp secret(%__MODULE__{secret: secret, owner: owner}, name) do
+    case secret.(owner, name) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      {:error, reason} -> {:error, inspect(reason)}
     end
   end
 
