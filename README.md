@@ -7,7 +7,7 @@ Gives [WardrikCore](https://hexdocs.pm/wardrik_core) agents the tools of any MCP
 ```elixir
 def deps do
   [
-    {:wardrik_mcp, "~> 0.1.0-rc.1"}
+    {:wardrik_mcp, "~> 0.1.0-rc.2"}
   ]
 end
 ```
