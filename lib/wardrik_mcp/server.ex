@@ -23,19 +23,15 @@ defmodule WardrikMCP.Server do
               required: true,
               doc: """
               `{:stdio, command: ..., args: ..., env: ...}` or
-              `{:streamable_http, url: ..., headers: ...}`. The `url` is the server's endpoint, as
-              it publishes it, as `"https://mcp.linear.app/mcp"`. A command gets its `env` and only
-              these of the app's own variables: #{Enum.map_join(@inherited, ", ", &"`#{&1}`")}.
-              It's started through `env`, which unsets the rest.
-
-              A header's value is a string, `{:secret, name}`, or a list of both, as
-              `["Bearer ", {:secret, "LINEAR_TOKEN"}]`. A secret is read with `WardrikMCP`'s
-              `:secret` each time the server connects.
+              `{:streamable_http, url: ..., headers: ...}`, as `url: "https://mcp.linear.app/mcp"`.
+              A command gets its `env` plus #{Enum.map_join(@inherited, ", ", &"`#{&1}`")}, and
+              nothing else from your app's environment. A header's value is a string,
+              `{:secret, name}`, or a list of both, as `["Bearer ", {:secret, "LINEAR_TOKEN"}]`.
               """
             ],
             owner: [
               type: :string,
-              doc: "Whose secrets its headers name. `WardrikMCP`'s `:secret` is given it."
+              doc: "Passed to `WardrikMCP`'s `:secret` with each secret name."
             ],
             only: [
               type: {:list, :string},
@@ -52,10 +48,7 @@ defmodule WardrikMCP.Server do
             ],
             credential_name: [
               type: :string,
-              doc: """
-              The credential each principal reaches the server with. See
-              `WardrikCore.Credentials`.
-              """
+              doc: "The credential each person connects with. See `WardrikCore.Credentials`."
             ],
             credential_header: [
               type: :string,
@@ -95,7 +88,7 @@ defmodule WardrikMCP.Server do
             trusted: [
               type: :boolean,
               default: false,
-              doc: "`true` treats answers as the deployment's own, not labelled `\"outside\"`."
+              doc: "`true` stops labelling answers `\"outside\"`."
             ]
           )
 
@@ -196,11 +189,7 @@ defmodule WardrikMCP.Server do
     end
   end
 
-  @doc """
-  Returns `:ok` if the server may be reached now, or `{:error, reason}`.
-
-  Always `:ok` without a `check`. With one, a command is refused and the URL must pass it.
-  """
+  @doc "Returns `:ok` if the server passes its `check`, or `{:error, reason}`."
   @spec reachable(t()) :: :ok | {:error, String.t()}
   def reachable(%__MODULE__{check: nil}), do: :ok
 
@@ -216,10 +205,7 @@ defmodule WardrikMCP.Server do
     end
   end
 
-  @doc """
-  Returns the server with each secret its headers name read, or `{:error, reason}` for the first
-  that can't be.
-  """
+  @doc "Returns the server with its header secrets read, or `{:error, reason}`."
   @spec resolved(t()) :: {:ok, t()} | {:error, String.t()}
   def resolved(%__MODULE__{transport: {:streamable_http, opts}} = server) do
     headers = opts[:headers]

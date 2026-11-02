@@ -1,15 +1,5 @@
 defmodule WardrikMCP.Servers do
-  @moduledoc """
-  Tracks a `WardrikMCP`'s servers and their tools.
-
-  It holds the servers it started with and those added at runtime. For servers with a
-  `credential_name`, it also holds the tools last listed.
-
-  Servers added at runtime are kept in the store. Each node re-reads the store on the
-  `:reconcile` interval. If a `:check` is given, it's called when a server is added and each time a
-  connection starts. The secrets a server's headers name are read with `:secret` as each
-  connection starts.
-  """
+  @moduledoc false
 
   use GenServer
 

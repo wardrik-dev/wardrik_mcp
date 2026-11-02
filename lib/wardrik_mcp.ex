@@ -2,26 +2,14 @@ defmodule WardrikMCP do
   @moduledoc """
   Gives WardrikCore agents the tools of any MCP server.
 
-  Start it with the servers it connects to:
-
       children = [
         {WardrikMCP,
          name: MyApp.MCP,
          servers: [
-           github: [
-             transport: {:stdio, command: "github-mcp-server", args: ["stdio"]},
-             only: ["search_issues", "create_issue"]
-           ],
-           linear: [
-             transport:
-               {:streamable_http,
-                url: "https://mcp.linear.app/mcp",
-                headers: %{"authorization" => "Bearer " <> System.fetch_env!("LINEAR_TOKEN")}}
-           ]
+           github: [transport: {:stdio, command: "github-mcp-server", args: ["stdio"]}],
+           linear: [transport: {:streamable_http, url: "https://mcp.linear.app/mcp"}]
          ]}
       ]
-
-  Then give an agent their tools as a `WardrikCore.Capability`:
 
       WardrikCore.start_agent(
         agent_id: "triage",
@@ -29,61 +17,18 @@ defmodule WardrikMCP do
         capabilities: [{WardrikMCP, name: MyApp.MCP, servers: [:github, :linear]}]
       )
 
-  The model sees each tool as `github__search_issues`, with the server's own description and JSON
-  Schema. See `WardrikMCP.Server` for every server option.
-
-  Use it when the tools an agent needs already exist as an MCP server.
-
-  ## Connections
-
-  Each server connects on its own. A server that's down offers no tools and doesn't block the
-  others. It's retried with backoff, up to a minute between tries. When a server says its tools
-  changed, they're listed again.
-
-  ## Secrets
-
-  A header can name a secret instead of holding it. `:secret` reads it each time the server
-  connects, for the server's `owner`:
-
-      {WardrikMCP,
-       name: MyApp.MCP,
-       secret: &MyApp.Vault.fetch/2,
-       servers: [
-         crm: [
-           transport:
-             {:streamable_http,
-              url: "https://mcp.crm.example/mcp",
-              headers: %{"authorization" => ["Bearer ", {:secret, "CRM_KEY"}]}},
-           owner: "acme"
-         ]
-       ]}
-
-  A server whose secret can't be read is down, and tried again like any other. After a secret
-  changes, `reconnect/2` connects its servers again.
-
-  ## Annotations
-
-  Each tool carries the server's hints as `WardrikCore.Tool` annotations: `read_only`,
-  `destructive`, `idempotent` and `open_world`. A hint the server doesn't give isn't set.
-
-    * A read-only tool is also `idempotent`.
-    * A tool is `gated` unless it's read-only. The server's `gated` option overrides this.
-    * Answers are labelled `"outside"` unless the server is `trusted`.
-
-  ## Errors
-
-  A call that fails transiently raises `WardrikMCP.Unavailable`. This covers a dropped connection,
-  a timeout or a server error. The tool runner then retries read-only and idempotent tools. See
-  `WardrikCore.Retry`.
-
-  An error the tool itself returns is passed to the model as the call's error.
+    * The model sees each tool as `github__search_issues`.
+    * Server options are in `WardrikMCP.Server`.
+    * A server that's down offers no tools and is retried, up to a minute between tries.
+    * Tools carry the server's hints as `WardrikCore.Tool` annotations. A tool is `gated` unless
+      it's read-only.
+    * A transient failure raises `WardrikMCP.Unavailable`, so the tool runner can retry.
+    * An error the tool returns reaches the model as the call's error.
 
   ## Telemetry
 
-  `[:wardrik_mcp, :tools]` is emitted each time a server's tools change.
-
-    * Measurements: `:count`, the number of tools the server offers. `0` while it's down.
-    * Metadata: `:mcp`, the `WardrikMCP` name, and `:server`, the server's name.
+    * `[:wardrik_mcp, :tools]` when a server's tools change. Measurements: `:count` (`0` while
+      down). Metadata: `:mcp`, `:server`.
   """
   @behaviour WardrikCore.Capability
   use Supervisor
@@ -113,17 +58,15 @@ defmodule WardrikMCP do
              check: [
                type: {:or, [{:fun, 1}, nil]},
                doc: """
-               A function called on each URL of a server added at runtime. It returns `:ok` or
-               `{:error, reason}`. It's called when the server is added and each time a connection
-               starts. With a check, runtime servers must use HTTP; commands are refused. Use one
-               when users supply the URLs.
+               Vets each URL of a server added at runtime, returning `:ok` or `{:error, reason}`.
+               With a check, runtime servers must use HTTP.
                """
              ],
              secret: [
                type: {:or, [{:fun, 2}, nil]},
                doc: """
-               A function that reads the secret a header names, given the server's `owner` and the
-               secret's name. It returns `{:ok, value}` or `{:error, reason}`. See "Secrets".
+               Reads a secret a header names: `fun.(owner, name)` returns `{:ok, value}` or
+               `{:error, reason}`.
                """
              ]
            )
@@ -132,14 +75,7 @@ defmodule WardrikMCP do
   alias WardrikMCP.Servers
 
   @doc """
-  Starts `WardrikMCP` and connects to each of its servers.
-
-      WardrikMCP.start_link(
-        name: MyApp.MCP,
-        servers: [github: [transport: {:stdio, command: "github-mcp-server", args: ["stdio"]}]],
-        store: store,
-        check: &MyApp.Egress.public/1
-      )
+  Starts `WardrikMCP` and connects to its servers.
 
   ## Options
 
@@ -152,10 +88,7 @@ defmodule WardrikMCP do
   end
 
   @doc """
-  Adds the server `name` at runtime.
-
-  Takes the same options as a server in `:servers`, but only as data, not functions. With a
-  `:store`, every node reaches it.
+  Adds the server `name`. Options are as in `WardrikMCP.Server`, as data, not functions.
 
       :ok =
         WardrikMCP.add(MyApp.MCP, "linear",
@@ -167,21 +100,19 @@ defmodule WardrikMCP do
   def add(mcp, name, opts) when is_binary(name), do: Servers.add(mcp, name, opts)
 
   @doc """
-  Removes the server `name` and closes every connection to it.
+  Removes the server `name` and closes its connections.
 
-  Returns `{:error, :not_found}` if there's no such server, and `{:error, reason}` for a server
-  given in `:servers`.
+  Returns `{:error, :not_found}`, or `{:error, reason}` for a server given in `:servers`.
   """
   @spec remove(atom(), String.t()) :: :ok | {:error, :not_found | String.t()}
   def remove(mcp, name), do: Servers.remove(mcp, name)
 
   @doc """
-  Connects again each server of `:owner` whose headers name the `:secret`, so they read its new
-  value. Call it after the secret changes.
+  Reconnects the servers whose headers name a secret. Call it after the secret changes.
 
       :ok = WardrikMCP.reconnect(MyApp.MCP, owner: "acme", secret: "CRM_KEY")
 
-  `:owner` is `nil` for the servers no one owns.
+  `owner: nil` matches servers with no `owner`.
   """
   @spec reconnect(atom(), owner: String.t() | nil, secret: String.t()) :: :ok
   def reconnect(mcp, args), do: Servers.reconnect(mcp, args)
@@ -190,7 +121,7 @@ defmodule WardrikMCP do
   @spec servers(atom()) :: [String.t()]
   def servers(mcp), do: mcp |> Servers.all() |> Map.keys() |> Enum.sort()
 
-  @doc "Re-reads the servers in the store now, picking up those added or removed on other nodes."
+  @doc "Re-reads the store now, for servers added or removed on other nodes."
   @spec reconcile(atom()) :: :ok
   def reconcile(mcp), do: Servers.reconcile(mcp)
 
@@ -239,6 +170,6 @@ defmodule WardrikMCP do
 end
 
 defmodule WardrikMCP.Unavailable do
-  @moduledoc "Raised when an MCP server fails transiently. Retrying the call may succeed."
+  @moduledoc "Raised when an MCP server fails transiently. A retry may succeed."
   defexception [:message]
 end

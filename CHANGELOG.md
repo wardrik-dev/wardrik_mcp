@@ -1,14 +1,12 @@
 # Changelog
 
-## 0.1.0-rc.2 (2026-10-31)
+## 0.1.0-rc.2 (2026-11-02)
 
-- A header's value can name a secret, as `{:secret, name}` or `["Bearer ", {:secret, name}]`,
-  read with the `:secret` option for the server's `owner` each time it connects. A server whose
-  secret can't be read is down, like one that can't be reached.
-- `reconnect/2` connects the servers whose headers name a secret again, once it changes. It takes
-  the `:owner` and `:secret` by name.
-- `start_link/1`'s options, and each server's and its transport's, are validated with
-  NimbleOptions and documented from their schemas.
+- Requires `wardrik_core` 0.1.0-rc.2.
+- A header's value can name a secret, as `["Bearer ", {:secret, "CRM_KEY"}]`. `:secret` reads it
+  for the server's `owner` each time it connects.
+- `reconnect/2` reconnects the servers whose headers name a secret, after it changes.
+- Options for `start_link/1`, each server and its transport are validated with NimbleOptions.
 
 ## 0.1.0-rc.1 (2026-10-30)
 
