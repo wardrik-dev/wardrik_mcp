@@ -59,7 +59,7 @@ defmodule WardrikMCP do
        ]}
 
   A server whose secret can't be read is down, and tried again like any other. After a secret
-  changes, `reconnect/3` connects its servers again.
+  changes, `reconnect/2` connects its servers again.
 
   ## Annotations
 
@@ -176,13 +176,15 @@ defmodule WardrikMCP do
   def remove(mcp, name), do: Servers.remove(mcp, name)
 
   @doc """
-  Connects again each server of `owner` whose headers name the secret `name`, so they read its new
+  Connects again each server of `:owner` whose headers name the `:secret`, so they read its new
   value. Call it after the secret changes.
 
-      :ok = WardrikMCP.reconnect(MyApp.MCP, "acme", "CRM_KEY")
+      :ok = WardrikMCP.reconnect(MyApp.MCP, owner: "acme", secret: "CRM_KEY")
+
+  `:owner` is `nil` for the servers no one owns.
   """
-  @spec reconnect(atom(), String.t() | nil, String.t()) :: :ok
-  def reconnect(mcp, owner, name), do: Servers.reconnect(mcp, owner, name)
+  @spec reconnect(atom(), owner: String.t() | nil, secret: String.t()) :: :ok
+  def reconnect(mcp, args), do: Servers.reconnect(mcp, args)
 
   @doc "Returns the names of all servers, sorted."
   @spec servers(atom()) :: [String.t()]

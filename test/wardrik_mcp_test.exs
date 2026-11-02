@@ -3,7 +3,7 @@ defmodule WardrikMCPTest.Tokens do
   @behaviour WardrikCore.Credentials
 
   @impl true
-  def resolve("stub", %WardrikCore.Principal{id: id}, tokens) do
+  def resolve(%{name: "stub", principal: %WardrikCore.Principal{id: id}}, tokens) do
     case Map.fetch(tokens, id) do
       {:ok, token} -> {:ok, token}
       :error -> {:authorize, "https://sign.in/" <> id}
@@ -16,10 +16,10 @@ defmodule WardrikMCPTest.Rotating do
   @behaviour WardrikCore.Credentials
 
   @impl true
-  def resolve("stub", _principal, tokens), do: {:ok, Agent.get(tokens, & &1.token)}
+  def resolve(%{name: "stub"}, tokens), do: {:ok, Agent.get(tokens, & &1.token)}
 
   @impl true
-  def refused("stub", _principal, tokens) do
+  def refused(%{name: "stub"}, tokens) do
     Agent.update(tokens, fn state ->
       send(state.test, {:refused, state.token})
       %{state | token: state.token <> "-renewed"}
@@ -299,10 +299,10 @@ defmodule WardrikMCPTest do
       assert_receive {:authorization, "Bearer one"}, 5_000
 
       Agent.update(secrets, &Map.put(&1, {"acme", "KEY"}, "two"))
-      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, "globex", "KEY")
+      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, owner: "globex", secret: "KEY")
       refute_receive {:read, _owner, _name}, 200
 
-      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, "acme", "KEY")
+      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, owner: "acme", secret: "KEY")
       assert_receive {:authorization, "Bearer two"}, 5_000
     end
 

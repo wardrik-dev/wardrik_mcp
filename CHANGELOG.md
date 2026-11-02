@@ -5,7 +5,8 @@
 - A header's value can name a secret, as `{:secret, name}` or `["Bearer ", {:secret, name}]`,
   read with the `:secret` option for the server's `owner` each time it connects. A server whose
   secret can't be read is down, like one that can't be reached.
-- `reconnect/3` connects the servers whose headers name a secret again, once it changes.
+- `reconnect/2` connects the servers whose headers name a secret again, once it changes. It takes
+  the `:owner` and `:secret` by name.
 - `start_link/1`'s options, and each server's and its transport's, are validated with
   NimbleOptions and documented from their schemas.
 
