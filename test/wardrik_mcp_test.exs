@@ -299,10 +299,10 @@ defmodule WardrikMCPTest do
       assert_receive {:authorization, "Bearer one"}, 5_000
 
       Agent.update(secrets, &Map.put(&1, {"acme", "KEY"}, "two"))
-      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, "globex", "KEY")
+      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, owner: "globex", secret: "KEY")
       refute_receive {:read, _owner, _name}, 200
 
-      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, "acme", "KEY")
+      assert :ok = WardrikMCP.reconnect(WardrikMCPTest.Secrets, owner: "acme", secret: "KEY")
       assert_receive {:authorization, "Bearer two"}, 5_000
     end
 

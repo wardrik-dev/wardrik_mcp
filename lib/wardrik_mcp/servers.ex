@@ -47,9 +47,13 @@ defmodule WardrikMCP.Servers do
   @spec listed(atom(), String.t(), [map()]) :: :ok
   def listed(mcp, name, definitions), do: GenServer.call(name(mcp), {:listed, name, definitions})
 
-  @doc "Reconnects each server of `owner` whose headers name the secret `name`."
-  @spec reconnect(atom(), String.t() | nil, String.t()) :: :ok
-  def reconnect(mcp, owner, name), do: GenServer.call(name(mcp), {:reconnect, owner, name})
+  @doc "Reconnects each server of `:owner` whose headers name the `:secret`."
+  @spec reconnect(atom(), owner: String.t() | nil, secret: String.t()) :: :ok
+  def reconnect(mcp, args) do
+    owner = Keyword.fetch!(args, :owner)
+    secret = Keyword.fetch!(args, :secret)
+    GenServer.call(name(mcp), {:reconnect, owner, secret})
+  end
 
   @doc "Re-reads the servers in the store now."
   @spec reconcile(atom()) :: :ok
