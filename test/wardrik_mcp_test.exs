@@ -3,7 +3,7 @@ defmodule WardrikMCPTest.Tokens do
   @behaviour WardrikCore.Credentials
 
   @impl true
-  def resolve("stub", %WardrikCore.Principal{id: id}, tokens) do
+  def resolve(%{name: "stub", principal: %WardrikCore.Principal{id: id}}, tokens) do
     case Map.fetch(tokens, id) do
       {:ok, token} -> {:ok, token}
       :error -> {:authorize, "https://sign.in/" <> id}
@@ -16,10 +16,10 @@ defmodule WardrikMCPTest.Rotating do
   @behaviour WardrikCore.Credentials
 
   @impl true
-  def resolve("stub", _principal, tokens), do: {:ok, Agent.get(tokens, & &1.token)}
+  def resolve(%{name: "stub"}, tokens), do: {:ok, Agent.get(tokens, & &1.token)}
 
   @impl true
-  def refused("stub", _principal, tokens) do
+  def refused(%{name: "stub"}, tokens) do
     Agent.update(tokens, fn state ->
       send(state.test, {:refused, state.token})
       %{state | token: state.token <> "-renewed"}
