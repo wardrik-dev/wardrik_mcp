@@ -14,7 +14,12 @@ end
 
 ## Connect to servers
 
+Install `github-mcp-server` and set `GITHUB_TOKEN`, `LINEAR_TOKEN`, and `ANTHROPIC_API_KEY` before starting IEx.
+Run in a fresh session:
+
 ```elixir
+Mix.install([{:wardrik_mcp, "~> 0.1.0-rc.2"}])
+
 children = [
   {WardrikMCP,
    name: MyApp.MCP,
@@ -35,15 +40,26 @@ children = [
      ]
    ]}
 ]
+
+{:ok, _mcp} = Supervisor.start_link(children, strategy: :one_for_one)
 ```
 
 - A command gets its `env` plus `HOME`, `PATH` and a few other basics, not your app's whole environment.
 - A server that's down offers no tools. It's retried, up to a minute between tries.
 - Every server option is in `WardrikMCP.Server`.
 
-## Give an agent the tools
+## Configure agent tools
+
+Continue in the same session:
 
 ```elixir
+children = [
+  {WardrikCore.Backends.MemoryStore, name: :agents},
+  {WardrikCore, backend: {WardrikCore.Backends.MemoryStore, name: :agents}}
+]
+
+{:ok, _supervisor} = Supervisor.start_link(children, strategy: :rest_for_one)
+
 WardrikCore.start_agent(
   agent_id: "triage",
   model: "anthropic:claude-haiku-4-5",
@@ -56,6 +72,8 @@ WardrikCore.start_agent(
 - A result over `max_result_bytes` is cut, and the model is told.
 
 ## Secrets in headers
+
+Supervision-tree fragment: implement `MyApp.Vault.fetch/2` in your app.
 
 ```elixir
 {WardrikMCP,
@@ -80,17 +98,22 @@ server connects.
 
 ## Add servers at runtime
 
+Alternative startup fragment: define a persistent `store` and implement `MyApp.Egress.public/1` before starting MCP.
+
 ```elixir
 {WardrikMCP, name: MyApp.MCP, store: store, check: &MyApp.Egress.public/1}
 
-WardrikMCP.add(MyApp.MCP, "linear", transport: {:streamable_http, url: "https://mcp.linear.app/mcp"})
-#=> :ok
+WardrikMCP.add(MyApp.MCP, "linear",
+  transport: {:streamable_http, url: "https://mcp.linear.app/mcp"}
+)
+
+# => :ok
 
 WardrikMCP.servers(MyApp.MCP)
-#=> ["linear"]
+# => ["linear"]
 
 WardrikMCP.remove(MyApp.MCP, "linear")
-#=> :ok
+# => :ok
 ```
 
 - With a `:store`, every node sees the server. Options must be data, not functions.
@@ -124,9 +147,11 @@ WardrikPolicy.new!(default: [destructive: :deny, read_only: :allow, else: :ask])
 ## Costs
 
 ```elixir
-search: [
-  transport: {:streamable_http, url: "https://search.example.com/mcp"},
-  cost: fn result -> %{usd: result["_meta"]["usd"]} end
+[
+  search: [
+    transport: {:streamable_http, url: "https://search.example.com/mcp"},
+    cost: fn result -> %{usd: result["_meta"]["usd"]} end
+  ]
 ]
 ```
 

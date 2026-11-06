@@ -2,6 +2,9 @@ defmodule WardrikMCP do
   @moduledoc """
   Gives WardrikCore agents the tools of any MCP server.
 
+  Application integration fragment. Start the required processes before calling these functions.
+  See the [package README](https://github.com/wardrik-dev/wardrik_mcp#readme) for complete setup.
+
       children = [
         {WardrikMCP,
          name: MyApp.MCP,
